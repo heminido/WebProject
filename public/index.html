@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document Processing System</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 40px 20px;
+      font-family: Arial, sans-serif;
+      color: #202124;
+      background: #f6f7f9;
+    }
+
+    main {
+      max-width: 700px;
+      margin: 40px auto;
+      padding: 32px;
+      background: white;
+      border: 1px solid #e2e4e8;
+      border-radius: 12px;
+    }
+
+    h1 { margin-top: 0; }
+    h2 { margin-top: 30px; }
+    p { line-height: 1.6; }
+
+    input {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 360px;
+      margin: 8px 0 14px;
+      padding: 10px;
+      border: 1px solid #c4c8ce;
+      border-radius: 6px;
+      font: inherit;
+    }
+
+    button {
+      margin: 0 8px 8px 0;
+      padding: 11px 16px;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      background: #2563eb;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    section {
+      border-top: 1px solid #e2e4e8;
+      margin-top: 24px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Document Processing System</h1>
+    <p>Перевіряємо реєстрацію, вхід і спільні сесії двох API-серверів.</p>
+
+    <section>
+      <h2>Обліковий запис</h2>
+      <label for="nickname">Нікнейм</label>
+      <input id="nickname" autocomplete="username" minlength="3" maxlength="24" placeholder="Наприклад, student123">
+      <label for="password">Пароль</label>
+      <input id="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" placeholder="Від 8 символів">
+      <button id="register" type="button">Зареєструватися</button>
+      <button id="login" type="button">Увійти</button>
+      <button id="logout" type="button">Вийти</button>
+      <p id="account-result" role="status">Перевіряємо сесію...</p>
+      <button id="check-session" type="button">Перевірити сесію (10 запитів)</button>
+      <p id="session-result" role="status"></p>
+    </section>
+
+    <section>
+      <h2>Інфраструктура</h2>
+      <button id="check-server" type="button">Перевірити сервер</button>
+      <button id="check-balance" type="button">Перевірити балансування (10 запитів)</button>
+      <button id="check-database" type="button">Перевірити PostgreSQL (6 запитів)</button>
+      <p id="result" role="status"></p>
+      <p id="balance-result" role="status"></p>
+      <p id="database-result" role="status"></p>
+    </section>
+  </main>
+
+  <script>
+    const nicknameInput = document.getElementById("nickname");
+    const passwordInput = document.getElementById("password");
+    const accountResult = document.getElementById("account-result");
+    const sessionResult = document.getElementById("session-result");
+    const result = document.getElementById("result");
+    const balanceResult = document.getElementById("balance-result");
+    const databaseResult = document.getElementById("database-result");
+
+    async function apiRequest(url, options = {}) {
+      const response = await fetch(url, { cache: "no-store", ...options });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Помилка сервера.");
+      }
+
+      return data;
+    }
+
+    async function showAccount() {
+      try {
+        const data = await apiRequest("/api/me");
+        accountResult.textContent = data.authenticated
+          ? `Ви увійшли як ${data.nickname}. Відповів ${data.instance}.`
+          : "Ви не авторизовані.";
+      } catch {
+        accountResult.textContent = "Не вдалося перевірити сесію.";
+      }
+    }
+
+    async function submitAccount(url) {
+      accountResult.textContent = "Обробляємо запит...";
+      try {
+        const data = await apiRequest(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname: nicknameInput.value, password: passwordInput.value })
+        });
+        passwordInput.value = "";
+        accountResult.textContent = `Успішно. Ви увійшли як ${data.nickname}. Відповів ${data.instance}.`;
+      } catch (error) {
+        accountResult.textContent = error.message;
+      }
+    }
+
+    async function countRequests(url, total, requireAccount = false) {
+      const counts = {};
+      let databaseName = "";
+      let nickname = "";
+
+      for (let i = 0; i < total; i++) {
+        const data = await apiRequest(url);
+
+        if (requireAccount) {
+          if (!data.authenticated) {
+            throw new Error("Авторизація не збереглася.");
+          }
+          if (nickname && nickname !== data.nickname) {
+            throw new Error("Сервери повернули різних користувачів.");
+          }
+          nickname = data.nickname;
+        }
+
+        if (url === "/api/database") {
+          if (databaseName && databaseName !== data.database) {
+            throw new Error("Сервери підключені до різних баз даних.");
+          }
+          databaseName = data.database;
+        }
+
+        counts[data.instance] = (counts[data.instance] || 0) + 1;
+      }
+
+      const summary = Object.entries(counts).map(([name, count]) => `${name} — ${count}`).join("; ");
+      return { summary, databaseName, nickname };
+    }
+
+    document.getElementById("register").addEventListener("click", () => submitAccount("/api/register"));
+    document.getElementById("login").addEventListener("click", () => submitAccount("/api/login"));
+
+    document.getElementById("logout").addEventListener("click", async () => {
+      try {
+        await apiRequest("/api/logout", { method: "POST" });
+        passwordInput.value = "";
+        accountResult.textContent = "Ви вийшли з акаунта.";
+        sessionResult.textContent = "";
+      } catch {
+        accountResult.textContent = "Не вдалося вийти з акаунта.";
+      }
+    });
+
+    document.getElementById("check-session").addEventListener("click", async () => {
+      sessionResult.textContent = "Перевіряємо сесію...";
+      try {
+        const data = await countRequests("/api/me", 10, true);
+        sessionResult.textContent = `Користувач ${data.nickname}: ${data.summary}.`;
+      } catch (error) {
+        sessionResult.textContent = error.message;
+      }
+    });
+
+    document.getElementById("check-server").addEventListener("click", async () => {
+      try {
+        const data = await apiRequest("/api/health");
+        result.textContent = `З'єднання працює. Відповів ${data.instance} (порт ${data.port}).`;
+      } catch {
+        result.textContent = "Не вдалося отримати відповідь від сервера.";
+      }
+    });
+
+    document.getElementById("check-balance").addEventListener("click", async () => {
+      try {
+        const data = await countRequests("/api/health", 10);
+        balanceResult.textContent = `Результати: ${data.summary}.`;
+      } catch {
+        balanceResult.textContent = "Не вдалося перевірити балансування.";
+      }
+    });
+
+    document.getElementById("check-database").addEventListener("click", async () => {
+      try {
+        const data = await countRequests("/api/database", 6);
+        databaseResult.textContent = `База даних ${data.databaseName} доступна. ${data.summary}.`;
+      } catch {
+        databaseResult.textContent = "Не вдалося перевірити PostgreSQL.";
+      }
+    });
+
+    showAccount();
+  </script>
+</body>
+</html>

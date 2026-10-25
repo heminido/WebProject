@@ -1,0 +1,11 @@
+{
+  "name": "webproject",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}

@@ -1,0 +1,11 @@
+.git
+node_modules
+.env
+.env.*
+*.log
+*.zip
+uploads
+outputs
+results
+storage
+tmp

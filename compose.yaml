@@ -1,0 +1,68 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: webproject
+      POSTGRES_USER: webproject
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webproject -d webproject"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  api1:
+    build: .
+    environment:
+      PORT: 3000
+      INSTANCE_NAME: api-1
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: webproject
+      DB_USER: webproject
+      DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api2:
+    build: .
+    environment:
+      PORT: 3000
+      INSTANCE_NAME: api-2
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: webproject
+      DB_USER: webproject
+      DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
