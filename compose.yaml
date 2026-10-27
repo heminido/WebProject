@@ -24,6 +24,9 @@ services:
       DB_NAME: webproject
       DB_USER: webproject
       DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploaded_documents:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -43,6 +46,9 @@ services:
       DB_NAME: webproject
       DB_USER: webproject
       DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploaded_documents:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -66,3 +72,4 @@ services:
 
 volumes:
   postgres_data:
+  uploaded_documents:

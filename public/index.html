@@ -57,12 +57,31 @@
       border-top: 1px solid #e2e4e8;
       margin-top: 24px;
     }
+
+    #task-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    #task-list li {
+      padding: 12px;
+      margin-bottom: 10px;
+      border: 1px solid #e2e4e8;
+      border-radius: 6px;
+    }
+
+    progress {
+      display: block;
+      width: 100%;
+      max-width: 360px;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>Document Processing System</h1>
-    <p>Перевіряємо реєстрацію, вхід і спільні сесії двох API-серверів.</p>
+    <p>Реєстрація, задачі та завантаження PPTX у спільне сховище.</p>
 
     <section>
       <h2>Обліковий запис</h2>
@@ -76,6 +95,17 @@
       <p id="account-result" role="status">Перевіряємо сесію...</p>
       <button id="check-session" type="button">Перевірити сесію (10 запитів)</button>
       <p id="session-result" role="status"></p>
+    </section>
+
+    <section>
+      <h2>Мої задачі</h2>
+      <p>Створи чернетку та додай до неї PPTX (до 30 МіБ). Конвертація поки не запускається.</p>
+      <label for="task-name">Назва PPTX-файлу</label>
+      <input id="task-name" placeholder="presentation.pptx" maxlength="120" disabled>
+      <button id="create-task" type="button" disabled>Створити чернетку</button>
+      <button id="reload-tasks" type="button" disabled>Оновити історію</button>
+      <p id="tasks-result" role="status">Увійдіть, щоб переглянути задачі.</p>
+      <ul id="task-list"></ul>
     </section>
 
     <section>
@@ -97,10 +127,22 @@
     const result = document.getElementById("result");
     const balanceResult = document.getElementById("balance-result");
     const databaseResult = document.getElementById("database-result");
+    const taskNameInput = document.getElementById("task-name");
+    const tasksResult = document.getElementById("tasks-result");
+    const taskList = document.getElementById("task-list");
+    const createTaskButton = document.getElementById("create-task");
+    const reloadTasksButton = document.getElementById("reload-tasks");
 
     async function apiRequest(url, options = {}) {
       const response = await fetch(url, { cache: "no-store", ...options });
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(response.status === 413
+          ? "Файл завеликий. Максимум 30 МіБ."
+          : "Некоректна відповідь сервера.");
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Помилка сервера.");
@@ -109,14 +151,125 @@
       return data;
     }
 
+    function setTaskAccess(allowed) {
+      taskNameInput.disabled = !allowed;
+      createTaskButton.disabled = !allowed;
+      reloadTasksButton.disabled = !allowed;
+      if (!allowed) {
+        taskList.replaceChildren();
+        tasksResult.textContent = "Увійдіть, щоб переглянути задачі.";
+      }
+    }
+
+    async function loadTasks() {
+      tasksResult.textContent = "Завантажуємо історію...";
+      try {
+        const data = await apiRequest("/api/tasks");
+        taskList.replaceChildren();
+
+        for (const task of data.tasks) {
+          const item = document.createElement("li");
+          const info = document.createElement("div");
+          const status = task.status === "draft" ? "Чернетка" :
+            task.status === "cancelled" ? "Скасовано" : task.status;
+          info.textContent = `#${task.id} — ${task.source_filename} — ${status}`;
+          item.append(info);
+
+          if (task.status === "processing" || task.status === "completed") {
+            const bar = document.createElement("progress");
+            bar.max = 100;
+            bar.value = task.progress;
+            bar.setAttribute("aria-label", `Прогрес задачі ${task.id}`);
+            item.append(bar);
+          }
+
+          if (task.status === "draft") {
+            if (task.has_file) {
+              const attached = document.createElement("p");
+              attached.textContent = `PPTX збережено: ${Math.ceil(Number(task.file_size_bytes) / 1024)} КіБ. Конвертація ще не запускається.`;
+              item.append(attached);
+            } else {
+              const fileInput = document.createElement("input");
+              fileInput.type = "file";
+              fileInput.accept = ".pptx";
+              fileInput.setAttribute("aria-label", `Файл для задачі ${task.id}`);
+              item.append(fileInput);
+
+              const uploadButton = document.createElement("button");
+              uploadButton.type = "button";
+              uploadButton.textContent = "Завантажити PPTX";
+              uploadButton.addEventListener("click", async () => {
+                const file = fileInput.files[0];
+                if (!file) {
+                  tasksResult.textContent = "Спочатку виберіть PPTX-файл.";
+                  return;
+                }
+                if (file.name !== task.source_filename) {
+                  tasksResult.textContent = `Назва файлу має бути ${task.source_filename}.`;
+                  return;
+                }
+                if (file.size === 0 || file.size > 30 * 1024 * 1024) {
+                  tasksResult.textContent = "Розмір файлу має бути від 1 байта до 30 МіБ.";
+                  return;
+                }
+
+                uploadButton.disabled = true;
+                tasksResult.textContent = "Завантажуємо PPTX...";
+                try {
+                  await apiRequest(`/api/tasks/${task.id}/upload`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/octet-stream" },
+                    body: file
+                  });
+                  await loadTasks();
+                } catch (error) {
+                  tasksResult.textContent = error.message;
+                  uploadButton.disabled = false;
+                }
+              });
+              item.append(uploadButton);
+            }
+
+            const cancelButton = document.createElement("button");
+            cancelButton.type = "button";
+            cancelButton.textContent = "Скасувати";
+            cancelButton.addEventListener("click", async () => {
+              cancelButton.disabled = true;
+              try {
+                await apiRequest(`/api/tasks/${task.id}/cancel`, { method: "POST" });
+                await loadTasks();
+              } catch (error) {
+                tasksResult.textContent = error.message;
+                cancelButton.disabled = false;
+              }
+            });
+            item.append(cancelButton);
+          }
+
+          taskList.append(item);
+        }
+
+        tasksResult.textContent = data.tasks.length
+          ? `Знайдено ${data.tasks.length} останніх задач. Відповів ${data.instance}.`
+          : "Задач поки немає.";
+      } catch (error) {
+        tasksResult.textContent = error.message;
+      }
+    }
+
     async function showAccount() {
       try {
         const data = await apiRequest("/api/me");
         accountResult.textContent = data.authenticated
           ? `Ви увійшли як ${data.nickname}. Відповів ${data.instance}.`
           : "Ви не авторизовані.";
+        setTaskAccess(data.authenticated);
+        if (data.authenticated) {
+          await loadTasks();
+        }
       } catch {
         accountResult.textContent = "Не вдалося перевірити сесію.";
+        setTaskAccess(false);
       }
     }
 
@@ -130,6 +283,8 @@
         });
         passwordInput.value = "";
         accountResult.textContent = `Успішно. Ви увійшли як ${data.nickname}. Відповів ${data.instance}.`;
+        setTaskAccess(true);
+        await loadTasks();
       } catch (error) {
         accountResult.textContent = error.message;
       }
@@ -167,6 +322,25 @@
       return { summary, databaseName, nickname };
     }
 
+    createTaskButton.addEventListener("click", async () => {
+      createTaskButton.disabled = true;
+      try {
+        await apiRequest("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: taskNameInput.value })
+        });
+        taskNameInput.value = "";
+        await loadTasks();
+      } catch (error) {
+        tasksResult.textContent = error.message;
+      } finally {
+        createTaskButton.disabled = false;
+      }
+    });
+
+    reloadTasksButton.addEventListener("click", loadTasks);
+
     document.getElementById("register").addEventListener("click", () => submitAccount("/api/register"));
     document.getElementById("login").addEventListener("click", () => submitAccount("/api/login"));
 
@@ -176,6 +350,7 @@
         passwordInput.value = "";
         accountResult.textContent = "Ви вийшли з акаунта.";
         sessionResult.textContent = "";
+        setTaskAccess(false);
       } catch {
         accountResult.textContent = "Не вдалося вийти з акаунта.";
       }
