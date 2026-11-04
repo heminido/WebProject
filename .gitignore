@@ -124,3 +124,10 @@ venv/
 *.bak
 *.tmp
 *~
+
+# Local presentation tests, generated PDFs and change archives
+*.pptx
+*.ppt
+*.ppsx
+*.pdf
+*.zip

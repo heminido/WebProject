@@ -448,7 +448,7 @@ async function handleRequest(request, response) {
 
     if (request.method === "GET") {
       const result = await pool.query(
-        "SELECT id, source_filename, conversion_type, status, progress, created_at, (storage_name IS NOT NULL) AS has_file, file_size_bytes, (output_name IS NOT NULL) AS has_output, worker_name, error_message FROM tasks WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 30",
+        "SELECT id, source_filename, conversion_type, status, progress, processing_stage, created_at, (storage_name IS NOT NULL) AS has_file, file_size_bytes, (output_name IS NOT NULL) AS has_output, worker_name, error_message FROM tasks WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 30",
         [user.id]
       );
       sendJson(response, 200, { tasks: result.rows, instance });

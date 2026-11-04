@@ -65,7 +65,7 @@ async function takeTask() {
        LIMIT 1
      )
      UPDATE tasks AS t
-     SET status = 'processing', worker_name = $1,
+     SET status = 'processing', processing_stage = 'preparing', worker_name = $1,
          started_at = NOW(), updated_at = NOW(), error_message = NULL
      FROM next_task WHERE t.id = next_task.id
      RETURNING t.id, t.storage_name`,
@@ -175,6 +175,16 @@ async function updateHeartbeat(id) {
      WHERE id = $1 AND worker_name = $2 AND status = 'processing'
      RETURNING id`,
     [id, instance]
+  );
+  return result.rowCount > 0;
+}
+
+async function updateStage(id, stage) {
+  const result = await pool.query(
+    `UPDATE tasks SET processing_stage = $1, updated_at = NOW()
+     WHERE id = $2 AND worker_name = $3 AND status = 'processing'
+     RETURNING id`,
+    [stage, id, instance]
   );
   return result.rowCount > 0;
 }
@@ -313,12 +323,12 @@ async function convertTask(task) {
     }
     await validatePptx(sourcePath);
 
-    if (!(await taskIsProcessing(task.id))) {
-      return;
-    }
-
     if (stopping) {
       throw new Error("Worker зупинено під час конвертації.");
+    }
+
+    if (!(await updateStage(task.id, "converting"))) {
+      return;
     }
 
     if (!tempDir) {
@@ -345,6 +355,10 @@ async function convertTask(task) {
     }
     if (signature.toString() !== "%PDF-") {
       throw new Error("Створений файл не є PDF.");
+    }
+
+    if (!(await updateStage(task.id, "saving"))) {
+      return;
     }
 
     if (fileServiceUrl) {

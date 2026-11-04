@@ -80,11 +80,66 @@
       border-radius: 6px;
     }
 
-    progress {
-      display: block;
+    .task-progress {
+      display: flex;
+      gap: 5px;
       width: 100%;
-      max-width: 360px;
-      margin-top: 8px;
+      max-width: 440px;
+      height: 12px;
+      margin-top: 12px;
+    }
+
+    .task-progress-step {
+      position: relative;
+      overflow: hidden;
+      flex: 1;
+      border-radius: 6px;
+      background: #e2e8f0;
+    }
+
+    .task-progress-step::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: #16a34a;
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.4s ease;
+    }
+
+    .task-progress-step.done::before {
+      transform: scaleX(1);
+    }
+
+    .task-progress-step.current::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, #93c5fd, #2563eb, #93c5fd);
+      background-size: 200% 100%;
+      animation: progress-pulse 1.6s linear infinite;
+    }
+
+    .task-stage {
+      margin: 8px 0 4px;
+      color: #475569;
+      font-size: 14px;
+    }
+
+    @keyframes progress-pulse {
+      from { background-position: 200% 0; }
+      to { background-position: 0 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .task-progress-step::before {
+        transition: none;
+      }
+
+      .task-progress-step.current::after {
+        animation: none;
+        background: #2563eb;
+      }
     }
   </style>
 </head>
@@ -143,6 +198,11 @@
     const createTaskButton = document.getElementById("create-task");
     const reloadTasksButton = document.getElementById("reload-tasks");
     let taskRefreshTimer;
+    const processingStages = [
+      { key: "preparing", label: "Перевірка PPTX" },
+      { key: "converting", label: "Конвертація PPTX у PDF" },
+      { key: "saving", label: "Збереження PDF" }
+    ];
 
     async function apiRequest(url, options = {}) {
       const response = await fetch(url, { cache: "no-store", ...options });
@@ -173,20 +233,56 @@
       }
     }
 
+    function updateTaskProgress(item, task) {
+      const completed = task.status === "completed";
+      const foundIndex = processingStages.findIndex((stage) => stage.key === task.processing_stage);
+      const currentIndex = foundIndex === -1 ? 0 : foundIndex;
+      const stageText = completed ? "Готово — усі етапи завершено" : processingStages[currentIndex].label;
+      const bar = item.querySelector(".task-progress");
+      const description = item.querySelector(".task-stage");
+
+      bar.setAttribute("aria-label", `Задача ${task.id}: ${stageText}`);
+      bar.setAttribute("aria-valuetext", stageText);
+      description.textContent = stageText;
+
+      for (let i = 0; i < processingStages.length; i++) {
+        const segment = bar.children[i];
+        segment.classList.toggle("done", completed || i < currentIndex);
+        segment.classList.toggle("current", !completed && i === currentIndex);
+      }
+    }
+
     async function loadTasks() {
       clearTimeout(taskRefreshTimer);
-      tasksResult.textContent = "Завантажуємо історію...";
+      if (taskList.children.length === 0) {
+        tasksResult.textContent = "Завантажуємо історію...";
+      }
       try {
         const data = await apiRequest("/api/tasks");
-        taskList.replaceChildren();
+        const previousItems = Array.from(taskList.children);
+        const nextItems = [];
 
         for (const task of data.tasks) {
+          const signature = [task.status, task.has_file, task.has_output,
+            task.worker_name, task.error_message, task.file_size_bytes].join("|");
+          const previousItem = previousItems.find((item) => item.dataset.taskId === String(task.id));
+
+          if (previousItem && previousItem.dataset.signature === signature) {
+            if (task.status === "processing") {
+              updateTaskProgress(previousItem, task);
+            }
+            nextItems.push(previousItem);
+            continue;
+          }
+
           const item = document.createElement("li");
+          item.dataset.taskId = String(task.id);
+          item.dataset.signature = signature;
           const info = document.createElement("div");
           const names = {
             draft: "Чернетка",
             queued: "У черзі",
-            processing: "Конвертується",
+            processing: "Виконується",
             completed: "Завершено",
             failed: "Помилка",
             cancelled: "Скасовано"
@@ -195,10 +291,28 @@
           info.textContent = `#${task.id} — ${task.source_filename} — ${names[task.status] || task.status}${worker}`;
           item.append(info);
 
-          if (task.status === "processing") {
-            const bar = document.createElement("progress");
-            bar.setAttribute("aria-label", `Конвертація задачі ${task.id} триває`);
-            item.append(bar);
+          if (task.status === "processing" || task.status === "completed") {
+            const bar = document.createElement("div");
+            bar.className = "task-progress";
+            bar.setAttribute("role", "progressbar");
+
+            for (let i = 0; i < processingStages.length; i++) {
+              const segment = document.createElement("span");
+              segment.className = "task-progress-step";
+              bar.append(segment);
+            }
+
+            const description = document.createElement("p");
+            description.className = "task-stage";
+            item.append(bar, description);
+            updateTaskProgress(item, task);
+          }
+
+          if (task.status === "queued") {
+            const queuedInfo = document.createElement("p");
+            queuedInfo.className = "task-stage";
+            queuedInfo.textContent = "Очікує вільного worker.";
+            item.append(queuedInfo);
           }
 
           if (task.status === "completed" && task.has_output) {
@@ -295,7 +409,18 @@
             item.append(cancelButton);
           }
 
-          taskList.append(item);
+          nextItems.push(item);
+        }
+
+        for (let i = 0; i < nextItems.length; i++) {
+          if (taskList.children[i] !== nextItems[i]) {
+            taskList.insertBefore(nextItems[i], taskList.children[i] || null);
+          }
+        }
+        for (const oldItem of previousItems) {
+          if (!nextItems.includes(oldItem)) {
+            oldItem.remove();
+          }
         }
 
         tasksResult.textContent = data.tasks.length
@@ -303,7 +428,7 @@
           : "Задач поки немає.";
 
         if (data.tasks.some((task) => task.status === "queued" || task.status === "processing")) {
-          taskRefreshTimer = setTimeout(loadTasks, 2500);
+          taskRefreshTimer = setTimeout(loadTasks, 1000);
         }
       } catch (error) {
         tasksResult.textContent = error.message;
