@@ -43,7 +43,7 @@ Run these commands in the `WebProject` folder. Docker Desktop and Docker Compose
    docker compose up -d --build
    ```
 
-Open **http://localhost:8080**, create an account, upload a PPTX and start a conversion.
+Open **http://localhost:8080**, create an account, select a PPTX and click **Upload and convert**. The task is queued automatically.
 
 ### Updating an existing installation
 
@@ -58,7 +58,7 @@ Keep your existing `.env`. Do not run `docker compose down -v`: it removes datab
 
 ## Check load balancing
 
-Use the website's infrastructure buttons to check requests across `api-1` and `api-2`. Run several conversions to see different worker names on finished tasks. While a task runs, the progress bar shows real stages: **preparing**, **converting**, and **saving**. LibreOffice does not provide a reliable percentage.
+Use the website's infrastructure buttons to check requests across `api-1` and `api-2`. Run several conversions to see different worker names on finished tasks. The browser shows actual PPTX upload progress, then the task bar shows **upload**, **preparing**, **converting**, and **saving**. LibreOffice does not provide a reliable conversion percentage.
 
 ## Limits
 
@@ -66,6 +66,7 @@ Use the website's infrastructure buttons to check requests across `api-1` and `a
 - PPTX up to 30 MiB, 2,000 ZIP entries and 150 MiB uncompressed content.
 - Conversion timeout: 120 seconds. Each worker: 1 CPU and 1 GiB RAM.
 - PDF up to 100 MiB. The website shows the latest 30 tasks.
+- Completed, failed, cancelled and old draft tasks can be deleted individually or cleared from history with their files. Active tasks must be cancelled first.
 
 ## Optional remote worker
 

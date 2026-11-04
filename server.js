@@ -404,6 +404,76 @@ async function createTask(user, filename, response) {
   }
 }
 
+async function queueUploadedFile(user, filename, saved) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [user.id]);
+    const count = await client.query(
+      "SELECT COUNT(*)::INTEGER AS total FROM tasks WHERE user_id = $1 AND status IN ('draft', 'queued', 'processing')",
+      [user.id]
+    );
+    if (count.rows[0].total >= activeTaskLimit) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const result = await client.query(
+      `INSERT INTO tasks (user_id, source_filename, status, storage_name, file_size_bytes)
+       VALUES ($1, $2, 'queued', $3, $4) RETURNING id`,
+      [user.id, filename, saved.storageName, saved.size]
+    );
+    await client.query("COMMIT");
+    return result.rows[0].id;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteHistory(userId, taskId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const parameters = taskId ? [userId, taskId] : [userId];
+    const rows = await client.query(
+      `SELECT id, storage_name, output_name FROM tasks
+       WHERE user_id = $1 AND status IN ('draft', 'completed', 'failed', 'cancelled')
+       ${taskId ? "AND id = $2" : ""}
+       ORDER BY id FOR UPDATE`,
+      parameters
+    );
+    for (const task of rows.rows) {
+      if (task.storage_name) {
+        if (!/^[0-9a-f-]{36}\.pptx$/.test(task.storage_name)) {
+          throw new Error("Invalid PPTX storage name");
+        }
+        await fs.promises.rm(path.join(uploadDir, task.storage_name), { force: true });
+      }
+      if (task.output_name) {
+        if (!/^[0-9a-f-]{36}\.pdf$/.test(task.output_name)) {
+          throw new Error("Invalid PDF storage name");
+        }
+        await fs.promises.rm(path.join(uploadDir, task.output_name), { force: true });
+      }
+    }
+    if (rows.rowCount > 0) {
+      await client.query(
+        "DELETE FROM tasks WHERE user_id = $1 AND id = ANY($2::bigint[])",
+        [userId, rows.rows.map((task) => task.id)]
+      );
+    }
+    await client.query("COMMIT");
+    return rows.rowCount;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function handleRequest(request, response) {
   if (await handleWorkerFile(request, response)) {
     return;
@@ -436,6 +506,83 @@ async function handleRequest(request, response) {
     sendJson(response, 200, user
       ? { authenticated: true, nickname: user.nickname, instance }
       : { authenticated: false, instance });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/tasks/convert") {
+    const user = await currentUser(request);
+    if (!user) {
+      sendJson(response, 401, { error: "Спочатку увійдіть в акаунт." });
+      return;
+    }
+    if (request.headers["content-type"] !== "application/octet-stream") {
+      sendJson(response, 415, { error: "Очікується вміст PPTX-файлу." });
+      return;
+    }
+
+    let filename;
+    try {
+      const encoded = request.headers["x-file-name"];
+      filename = typeof encoded === "string" ? decodeURIComponent(encoded) : "";
+      if (filename.length < 6 || filename.length > 120 || !/\.pptx$/i.test(filename) || /[\x00-\x1f/\\]/.test(filename)) {
+        throw new Error("Виберіть PPTX-файл з назвою до 120 символів.");
+      }
+    } catch {
+      sendJson(response, 400, { error: "Некоректна назва PPTX-файлу." });
+      return;
+    }
+
+    let saved;
+    let attached = false;
+    let reply;
+    try {
+      saved = await saveUploadedFile(request);
+      const taskId = await queueUploadedFile(user, filename, saved);
+      if (taskId) {
+        attached = true;
+        reply = { status: 201, data: { queued: true, taskId, instance } };
+      } else {
+        reply = { status: 409, data: { error: `Ліміт: не більше ${activeTaskLimit} активних задач.` } };
+      }
+    } catch (error) {
+      if (error.statusCode) {
+        reply = { status: error.statusCode, data: { error: error.message } };
+      } else {
+        throw error;
+      }
+    } finally {
+      if (saved && !attached) {
+        await fs.promises.rm(saved.finalPath, { force: true });
+      }
+    }
+    sendJson(response, reply.status, reply.data);
+    return;
+  }
+
+  if (request.method === "DELETE" && request.url === "/api/tasks/history") {
+    const user = await currentUser(request);
+    if (!user) {
+      sendJson(response, 401, { error: "Спочатку увійдіть в акаунт." });
+      return;
+    }
+    const deleted = await deleteHistory(user.id);
+    sendJson(response, 200, { deleted, instance });
+    return;
+  }
+
+  const deleteMatch = request.url?.match(/^\/api\/tasks\/(\d{1,19})$/);
+  if (request.method === "DELETE" && deleteMatch) {
+    const user = await currentUser(request);
+    if (!user) {
+      sendJson(response, 401, { error: "Спочатку увійдіть в акаунт." });
+      return;
+    }
+    const deleted = await deleteHistory(user.id, deleteMatch[1]);
+    if (!deleted) {
+      sendJson(response, 409, { error: "Задачу не знайдено або вона ще виконується." });
+      return;
+    }
+    sendJson(response, 200, { deleted, instance });
     return;
   }
 

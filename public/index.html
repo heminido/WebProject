@@ -111,6 +111,11 @@
       transform: scaleX(1);
     }
 
+    .task-progress-step.uploading::before {
+      background: #2563eb;
+      transform: scaleX(var(--upload-ratio, 0));
+    }
+
     .task-progress-step.current::after {
       content: "";
       position: absolute;
@@ -164,11 +169,22 @@
 
     <section>
       <h2>Мої задачі</h2>
-      <p>Створи чернетку, додай PPTX (до 30 МіБ) і запусти конвертацію в PDF.</p>
-      <label for="task-name">Назва PPTX-файлу</label>
-      <input id="task-name" placeholder="presentation.pptx" maxlength="120" disabled>
-      <button id="create-task" type="button" disabled>Створити чернетку</button>
+      <p>Вибери PPTX (до 30 МіБ) та запусти конвертацію в PDF.</p>
+      <label for="conversion-file">PPTX-файл</label>
+      <input id="conversion-file" type="file" accept=".pptx" disabled>
+      <button id="convert-file" type="button" disabled>Завантажити та конвертувати</button>
+      <button id="clear-selection" type="button" disabled>Скасувати вибір</button>
       <button id="reload-tasks" type="button" disabled>Оновити історію</button>
+      <button id="clear-history" type="button" disabled>Очистити історію</button>
+      <div id="upload-progress-container" hidden>
+        <div id="upload-progress" class="task-progress" role="progressbar" aria-label="Завантаження PPTX" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span class="task-progress-step uploading"></span>
+          <span class="task-progress-step"></span>
+          <span class="task-progress-step"></span>
+          <span class="task-progress-step"></span>
+        </div>
+        <p id="upload-progress-text" class="task-stage" role="status"></p>
+      </div>
       <p id="tasks-result" role="status">Увійдіть, щоб переглянути задачі.</p>
       <ul id="task-list"></ul>
     </section>
@@ -192,13 +208,21 @@
     const result = document.getElementById("result");
     const balanceResult = document.getElementById("balance-result");
     const databaseResult = document.getElementById("database-result");
-    const taskNameInput = document.getElementById("task-name");
+    const conversionFileInput = document.getElementById("conversion-file");
     const tasksResult = document.getElementById("tasks-result");
     const taskList = document.getElementById("task-list");
-    const createTaskButton = document.getElementById("create-task");
+    const convertFileButton = document.getElementById("convert-file");
+    const clearSelectionButton = document.getElementById("clear-selection");
+    const clearHistoryButton = document.getElementById("clear-history");
+    const uploadProgressContainer = document.getElementById("upload-progress-container");
+    const uploadProgress = document.getElementById("upload-progress");
+    const uploadProgressText = document.getElementById("upload-progress-text");
+    let canManageTasks = false;
+    let uploadingFile = false;
     const reloadTasksButton = document.getElementById("reload-tasks");
     let taskRefreshTimer;
     const processingStages = [
+      { key: "uploaded", label: "PPTX завантажено" },
       { key: "preparing", label: "Перевірка PPTX" },
       { key: "converting", label: "Конвертація PPTX у PDF" },
       { key: "saving", label: "Збереження PDF" }
@@ -222,22 +246,81 @@
       return data;
     }
 
+    function setUploadProgress(percent) {
+      uploadProgress.firstElementChild.style.setProperty("--upload-ratio", String(percent / 100));
+      uploadProgress.setAttribute("aria-valuenow", String(percent));
+      uploadProgressText.textContent = percent === 100
+        ? "Файл передано. Очікуємо підтвердження сервера..."
+        : `Завантаження PPTX: ${percent}%`;
+    }
+
+    function uploadFile(file) {
+      return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", "/api/tasks/convert");
+        request.setRequestHeader("Content-Type", "application/octet-stream");
+        request.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+
+        request.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) {
+            setUploadProgress(Math.floor(event.loaded / event.total * 100));
+          }
+        });
+
+        request.addEventListener("load", () => {
+          let data;
+          try {
+            data = JSON.parse(request.responseText);
+          } catch {
+            reject(new Error(request.status === 413
+              ? "Файл завеликий. Максимум 30 МіБ."
+              : "Некоректна відповідь сервера."));
+            return;
+          }
+          if (request.status < 200 || request.status >= 300) {
+            reject(new Error(data.error || "Помилка сервера."));
+          } else {
+            resolve(data);
+          }
+        });
+
+        request.addEventListener("error", () => {
+          reject(new Error("Не вдалося завантажити PPTX."));
+        });
+
+        request.send(file);
+      });
+    }
+
+    function updateFileButtons() {
+      const selected = conversionFileInput.files.length > 0;
+      convertFileButton.disabled = !canManageTasks || !selected || uploadingFile;
+      clearSelectionButton.disabled = !canManageTasks || !selected || uploadingFile;
+      conversionFileInput.disabled = !canManageTasks || uploadingFile;
+    }
+
     function setTaskAccess(allowed) {
-      taskNameInput.disabled = !allowed;
-      createTaskButton.disabled = !allowed;
+      canManageTasks = allowed;
       reloadTasksButton.disabled = !allowed;
+      clearHistoryButton.disabled = !allowed;
       if (!allowed) {
+        conversionFileInput.value = "";
+        uploadProgressContainer.hidden = true;
         clearTimeout(taskRefreshTimer);
         taskList.replaceChildren();
         tasksResult.textContent = "Увійдіть, щоб переглянути задачі.";
       }
+      updateFileButtons();
     }
 
     function updateTaskProgress(item, task) {
       const completed = task.status === "completed";
+      const queued = task.status === "queued";
       const foundIndex = processingStages.findIndex((stage) => stage.key === task.processing_stage);
-      const currentIndex = foundIndex === -1 ? 0 : foundIndex;
-      const stageText = completed ? "Готово — усі етапи завершено" : processingStages[currentIndex].label;
+      const currentIndex = foundIndex === -1 ? 1 : foundIndex;
+      const stageText = completed ? "Готово — усі етапи завершено"
+        : queued ? "Файл завантажено — очікує вільного worker"
+        : processingStages[currentIndex].label;
       const bar = item.querySelector(".task-progress");
       const description = item.querySelector(".task-stage");
 
@@ -247,8 +330,8 @@
 
       for (let i = 0; i < processingStages.length; i++) {
         const segment = bar.children[i];
-        segment.classList.toggle("done", completed || i < currentIndex);
-        segment.classList.toggle("current", !completed && i === currentIndex);
+        segment.classList.toggle("done", completed || (queued ? i === 0 : i < currentIndex));
+        segment.classList.toggle("current", !completed && !queued && i === currentIndex);
       }
     }
 
@@ -291,7 +374,7 @@
           info.textContent = `#${task.id} — ${task.source_filename} — ${names[task.status] || task.status}${worker}`;
           item.append(info);
 
-          if (task.status === "processing" || task.status === "completed") {
+          if (["queued", "processing", "completed"].includes(task.status)) {
             const bar = document.createElement("div");
             bar.className = "task-progress";
             bar.setAttribute("role", "progressbar");
@@ -306,13 +389,6 @@
             description.className = "task-stage";
             item.append(bar, description);
             updateTaskProgress(item, task);
-          }
-
-          if (task.status === "queued") {
-            const queuedInfo = document.createElement("p");
-            queuedInfo.className = "task-stage";
-            queuedInfo.textContent = "Очікує вільного worker.";
-            item.append(queuedInfo);
           }
 
           if (task.status === "completed" && task.has_output) {
@@ -330,69 +406,12 @@
           }
 
           if (task.status === "draft") {
-            if (task.has_file) {
-              const attached = document.createElement("p");
-              attached.textContent = `PPTX збережено: ${Math.ceil(Number(task.file_size_bytes) / 1024)} КіБ.`;
-              item.append(attached);
-
-              const startButton = document.createElement("button");
-              startButton.type = "button";
-              startButton.textContent = "Конвертувати в PDF";
-              startButton.addEventListener("click", async () => {
-                startButton.disabled = true;
-                try {
-                  await apiRequest(`/api/tasks/${task.id}/start`, { method: "POST" });
-                  await loadTasks();
-                } catch (error) {
-                  tasksResult.textContent = error.message;
-                  startButton.disabled = false;
-                }
-              });
-              item.append(startButton);
-            } else {
-              const fileInput = document.createElement("input");
-              fileInput.type = "file";
-              fileInput.accept = ".pptx";
-              fileInput.setAttribute("aria-label", `Файл для задачі ${task.id}`);
-              item.append(fileInput);
-
-              const uploadButton = document.createElement("button");
-              uploadButton.type = "button";
-              uploadButton.textContent = "Завантажити PPTX";
-              uploadButton.addEventListener("click", async () => {
-                const file = fileInput.files[0];
-                if (!file) {
-                  tasksResult.textContent = "Спочатку виберіть PPTX-файл.";
-                  return;
-                }
-                if (file.name !== task.source_filename) {
-                  tasksResult.textContent = `Назва файлу має бути ${task.source_filename}.`;
-                  return;
-                }
-                if (file.size === 0 || file.size > 30 * 1024 * 1024) {
-                  tasksResult.textContent = "Розмір файлу має бути від 1 байта до 30 МіБ.";
-                  return;
-                }
-
-                uploadButton.disabled = true;
-                tasksResult.textContent = "Завантажуємо PPTX...";
-                try {
-                  await apiRequest(`/api/tasks/${task.id}/upload`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/octet-stream" },
-                    body: file
-                  });
-                  await loadTasks();
-                } catch (error) {
-                  tasksResult.textContent = error.message;
-                  uploadButton.disabled = false;
-                }
-              });
-              item.append(uploadButton);
-            }
+            const details = document.createElement("p");
+            details.textContent = "Незавершена чернетка зі старої версії.";
+            item.append(details);
           }
 
-          if (["draft", "queued", "processing"].includes(task.status)) {
+          if (["queued", "processing"].includes(task.status)) {
             const cancelButton = document.createElement("button");
             cancelButton.type = "button";
             cancelButton.textContent = "Скасувати";
@@ -407,6 +426,26 @@
               }
             });
             item.append(cancelButton);
+          }
+
+          if (["draft", "completed", "failed", "cancelled"].includes(task.status)) {
+            const deleteButton = document.createElement("button");
+            deleteButton.type = "button";
+            deleteButton.textContent = "Видалити з історії";
+            deleteButton.addEventListener("click", async () => {
+              if (!confirm(`Видалити задачу #${task.id} та всі пов'язані файли?`)) {
+                return;
+              }
+              deleteButton.disabled = true;
+              try {
+                await apiRequest(`/api/tasks/${task.id}`, { method: "DELETE" });
+                await loadTasks();
+              } catch (error) {
+                tasksResult.textContent = error.message;
+                deleteButton.disabled = false;
+              }
+            });
+            item.append(deleteButton);
           }
 
           nextItems.push(item);
@@ -500,24 +539,72 @@
       return { summary, databaseName, nickname };
     }
 
-    createTaskButton.addEventListener("click", async () => {
-      createTaskButton.disabled = true;
+    conversionFileInput.addEventListener("change", () => {
+      uploadProgressContainer.hidden = true;
+      updateFileButtons();
+    });
+
+    clearSelectionButton.addEventListener("click", () => {
+      conversionFileInput.value = "";
+      uploadProgressContainer.hidden = true;
+      updateFileButtons();
+    });
+
+    convertFileButton.addEventListener("click", async () => {
+      const file = conversionFileInput.files[0];
+      if (!file) {
+        return;
+      }
+      if (file.name.length < 6 || file.name.length > 120 || !/\.pptx$/i.test(file.name) || /[\x00-\x1f/\\]/.test(file.name)) {
+        tasksResult.textContent = "Вибери PPTX-файл з назвою до 120 символів.";
+        return;
+      }
+      if (file.size === 0 || file.size > 30 * 1024 * 1024) {
+        tasksResult.textContent = "Розмір файлу має бути від 1 байта до 30 МіБ.";
+        return;
+      }
+
+      uploadingFile = true;
+      updateFileButtons();
+      uploadProgressContainer.hidden = false;
+      uploadProgress.firstElementChild.classList.add("uploading");
+      uploadProgress.firstElementChild.classList.remove("done");
+      setUploadProgress(0);
+      tasksResult.textContent = "Завантажуємо PPTX...";
       try {
-        await apiRequest("/api/tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename: taskNameInput.value })
-        });
-        taskNameInput.value = "";
+        await uploadFile(file);
+        uploadProgress.firstElementChild.classList.remove("uploading");
+        uploadProgress.firstElementChild.classList.add("done");
+        setUploadProgress(100);
+        uploadProgressText.textContent = "PPTX завантажено. Подальші етапи показано в історії.";
+        conversionFileInput.value = "";
         await loadTasks();
       } catch (error) {
+        uploadProgressContainer.hidden = true;
         tasksResult.textContent = error.message;
       } finally {
-        createTaskButton.disabled = false;
+        uploadingFile = false;
+        updateFileButtons();
       }
     });
 
     reloadTasksButton.addEventListener("click", loadTasks);
+
+    clearHistoryButton.addEventListener("click", async () => {
+      if (!confirm("Видалити всю завершену, скасовану й помилкову історію та старі чернетки разом із файлами? Активні задачі залишаться.")) {
+        return;
+      }
+      clearHistoryButton.disabled = true;
+      try {
+        const data = await apiRequest("/api/tasks/history", { method: "DELETE" });
+        await loadTasks();
+        tasksResult.textContent = `Видалено задач: ${data.deleted}.`;
+      } catch (error) {
+        tasksResult.textContent = error.message;
+      } finally {
+        clearHistoryButton.disabled = !canManageTasks;
+      }
+    });
 
     document.getElementById("register").addEventListener("click", () => submitAccount("/api/register"));
     document.getElementById("login").addEventListener("click", () => submitAccount("/api/login"));
