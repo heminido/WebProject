@@ -53,6 +53,16 @@
       cursor: wait;
     }
 
+    a.download-link {
+      display: inline-block;
+      margin: 0 8px 8px 0;
+      padding: 11px 16px;
+      border-radius: 6px;
+      color: white;
+      background: #2563eb;
+      text-decoration: none;
+    }
+
     section {
       border-top: 1px solid #e2e4e8;
       margin-top: 24px;
@@ -81,7 +91,7 @@
 <body>
   <main>
     <h1>Document Processing System</h1>
-    <p>Реєстрація, задачі та завантаження PPTX у спільне сховище.</p>
+    <p>Реєстрація, задачі та асинхронна конвертація PPTX у PDF.</p>
 
     <section>
       <h2>Обліковий запис</h2>
@@ -99,7 +109,7 @@
 
     <section>
       <h2>Мої задачі</h2>
-      <p>Створи чернетку та додай до неї PPTX (до 30 МіБ). Конвертація поки не запускається.</p>
+      <p>Створи чернетку, додай PPTX (до 30 МіБ) і запусти конвертацію в PDF.</p>
       <label for="task-name">Назва PPTX-файлу</label>
       <input id="task-name" placeholder="presentation.pptx" maxlength="120" disabled>
       <button id="create-task" type="button" disabled>Створити чернетку</button>
@@ -132,6 +142,7 @@
     const taskList = document.getElementById("task-list");
     const createTaskButton = document.getElementById("create-task");
     const reloadTasksButton = document.getElementById("reload-tasks");
+    let taskRefreshTimer;
 
     async function apiRequest(url, options = {}) {
       const response = await fetch(url, { cache: "no-store", ...options });
@@ -156,12 +167,14 @@
       createTaskButton.disabled = !allowed;
       reloadTasksButton.disabled = !allowed;
       if (!allowed) {
+        clearTimeout(taskRefreshTimer);
         taskList.replaceChildren();
         tasksResult.textContent = "Увійдіть, щоб переглянути задачі.";
       }
     }
 
     async function loadTasks() {
+      clearTimeout(taskRefreshTimer);
       tasksResult.textContent = "Завантажуємо історію...";
       try {
         const data = await apiRequest("/api/tasks");
@@ -170,24 +183,58 @@
         for (const task of data.tasks) {
           const item = document.createElement("li");
           const info = document.createElement("div");
-          const status = task.status === "draft" ? "Чернетка" :
-            task.status === "cancelled" ? "Скасовано" : task.status;
-          info.textContent = `#${task.id} — ${task.source_filename} — ${status}`;
+          const names = {
+            draft: "Чернетка",
+            queued: "У черзі",
+            processing: "Конвертується",
+            completed: "Завершено",
+            failed: "Помилка",
+            cancelled: "Скасовано"
+          };
+          const worker = task.worker_name ? ` (${task.worker_name})` : "";
+          info.textContent = `#${task.id} — ${task.source_filename} — ${names[task.status] || task.status}${worker}`;
           item.append(info);
 
-          if (task.status === "processing" || task.status === "completed") {
+          if (task.status === "processing") {
             const bar = document.createElement("progress");
-            bar.max = 100;
-            bar.value = task.progress;
-            bar.setAttribute("aria-label", `Прогрес задачі ${task.id}`);
+            bar.setAttribute("aria-label", `Конвертація задачі ${task.id} триває`);
             item.append(bar);
+          }
+
+          if (task.status === "completed" && task.has_output) {
+            const link = document.createElement("a");
+            link.className = "download-link";
+            link.href = `/api/tasks/${task.id}/download`;
+            link.textContent = "Завантажити PDF";
+            item.append(link);
+          }
+
+          if (task.status === "failed" && task.error_message) {
+            const errorInfo = document.createElement("p");
+            errorInfo.textContent = task.error_message;
+            item.append(errorInfo);
           }
 
           if (task.status === "draft") {
             if (task.has_file) {
               const attached = document.createElement("p");
-              attached.textContent = `PPTX збережено: ${Math.ceil(Number(task.file_size_bytes) / 1024)} КіБ. Конвертація ще не запускається.`;
+              attached.textContent = `PPTX збережено: ${Math.ceil(Number(task.file_size_bytes) / 1024)} КіБ.`;
               item.append(attached);
+
+              const startButton = document.createElement("button");
+              startButton.type = "button";
+              startButton.textContent = "Конвертувати в PDF";
+              startButton.addEventListener("click", async () => {
+                startButton.disabled = true;
+                try {
+                  await apiRequest(`/api/tasks/${task.id}/start`, { method: "POST" });
+                  await loadTasks();
+                } catch (error) {
+                  tasksResult.textContent = error.message;
+                  startButton.disabled = false;
+                }
+              });
+              item.append(startButton);
             } else {
               const fileInput = document.createElement("input");
               fileInput.type = "file";
@@ -229,7 +276,9 @@
               });
               item.append(uploadButton);
             }
+          }
 
+          if (["draft", "queued", "processing"].includes(task.status)) {
             const cancelButton = document.createElement("button");
             cancelButton.type = "button";
             cancelButton.textContent = "Скасувати";
@@ -252,6 +301,10 @@
         tasksResult.textContent = data.tasks.length
           ? `Знайдено ${data.tasks.length} останніх задач. Відповів ${data.instance}.`
           : "Задач поки немає.";
+
+        if (data.tasks.some((task) => task.status === "queued" || task.status === "processing")) {
+          taskRefreshTimer = setTimeout(loadTasks, 2500);
+        }
       } catch (error) {
         tasksResult.textContent = error.message;
       }

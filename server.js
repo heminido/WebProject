@@ -279,7 +279,7 @@ async function handleRequest(request, response) {
 
     if (request.method === "GET") {
       const result = await pool.query(
-        "SELECT id, source_filename, conversion_type, status, progress, created_at, (storage_name IS NOT NULL) AS has_file, file_size_bytes FROM tasks WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 30",
+        "SELECT id, source_filename, conversion_type, status, progress, created_at, (storage_name IS NOT NULL) AS has_file, file_size_bytes, (output_name IS NOT NULL) AS has_output, worker_name, error_message FROM tasks WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 30",
         [user.id]
       );
       sendJson(response, 200, { tasks: result.rows, instance });
@@ -299,6 +299,68 @@ async function handleRequest(request, response) {
     }
 
     await createTask(user, filename, response);
+    return;
+  }
+
+  const startMatch = request.url?.match(/^\/api\/tasks\/(\d{1,19})\/start$/);
+  if (request.method === "POST" && startMatch) {
+    const user = await currentUser(request);
+    if (!user) {
+      sendJson(response, 401, { error: "Спочатку увійдіть в акаунт." });
+      return;
+    }
+
+    const result = await pool.query(
+      `UPDATE tasks SET status = 'queued', updated_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND status = 'draft' AND storage_name IS NOT NULL
+       RETURNING id`,
+      [startMatch[1], user.id]
+    );
+
+    if (result.rowCount === 0) {
+      sendJson(response, 409, { error: "Додайте PPTX до чернетки перед запуском." });
+      return;
+    }
+
+    sendJson(response, 200, { queued: true, instance });
+    return;
+  }
+
+  const downloadMatch = request.url?.match(/^\/api\/tasks\/(\d{1,19})\/download$/);
+  if (request.method === "GET" && downloadMatch) {
+    const user = await currentUser(request);
+    if (!user) {
+      sendJson(response, 401, { error: "Спочатку увійдіть в акаунт." });
+      return;
+    }
+
+    const result = await pool.query(
+      "SELECT output_name FROM tasks WHERE id = $1 AND user_id = $2 AND status = 'completed'",
+      [downloadMatch[1], user.id]
+    );
+    const outputName = result.rows[0]?.output_name;
+    if (!outputName || !/^[0-9a-f-]{36}\.pdf$/.test(outputName)) {
+      sendJson(response, 404, { error: "Готовий PDF не знайдено." });
+      return;
+    }
+
+    const outputPath = path.join(uploadDir, outputName);
+    const info = await fs.promises.stat(outputPath).catch(() => null);
+    if (!info || !info.isFile()) {
+      sendJson(response, 404, { error: "PDF відсутній у сховищі." });
+      return;
+    }
+
+    const stream = fs.createReadStream(outputPath);
+    stream.on("error", () => response.destroy());
+    response.writeHead(200, {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="task-${downloadMatch[1]}.pdf"`,
+      "Content-Length": info.size,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff"
+    });
+    stream.pipe(response);
     return;
   }
 
@@ -363,14 +425,15 @@ async function handleRequest(request, response) {
 
     const result = await pool.query(
       `WITH selected AS (
-         SELECT id, storage_name FROM tasks
-         WHERE id = $1 AND user_id = $2 AND status = 'draft' FOR UPDATE
+         SELECT id, status, storage_name FROM tasks
+         WHERE id = $1 AND user_id = $2
+           AND status IN ('draft', 'queued', 'processing') FOR UPDATE
        )
        UPDATE tasks AS t
-       SET status = 'cancelled', storage_name = NULL, file_size_bytes = NULL,
+       SET status = 'cancelled',
            updated_at = NOW(), finished_at = NOW()
        FROM selected WHERE t.id = selected.id
-       RETURNING selected.storage_name`,
+       RETURNING selected.status AS previous_status, selected.storage_name`,
       [cancelMatch[1], user.id]
     );
 
@@ -379,12 +442,17 @@ async function handleRequest(request, response) {
       return;
     }
 
-    if (result.rows[0].storage_name) {
-      const storedPath = path.join(uploadDir, result.rows[0].storage_name);
+    const storageName = result.rows[0].storage_name;
+    if (storageName && result.rows[0].previous_status !== "processing") {
+      const storedPath = path.join(uploadDir, storageName);
       try {
         await fs.promises.rm(storedPath, { force: true });
+        await pool.query(
+          "UPDATE tasks SET storage_name = NULL WHERE id = $1 AND status = 'cancelled' AND storage_name = $2",
+          [cancelMatch[1], storageName]
+        );
       } catch (error) {
-        console.error("Failed to delete cancelled file:", error.message);
+        console.error("Failed to clean cancelled file:", error.message);
       }
     }
 
