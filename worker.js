@@ -4,10 +4,14 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawn, execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const { pipeline } = require("node:stream/promises");
+const { Readable } = require("node:stream");
 const { Pool } = require("pg");
 
 const instance = process.env.INSTANCE_NAME || "worker";
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
+const fileServiceUrl = (process.env.WORKER_FILES_URL || "").replace(/\/$/, "");
+const workerSecret = process.env.WORKER_SHARED_SECRET || "";
 const conversionTimeout = 120000;
 const maxPdfSize = 100 * 1024 * 1024;
 const maxUncompressedSize = 150 * 1024 * 1024;
@@ -238,19 +242,69 @@ async function runLibreOffice(id, sourcePath, temporaryDir) {
   }
 }
 
+function workerFileHeaders() {
+  return {
+    Authorization: `Bearer ${workerSecret}`,
+    "X-Worker-Name": instance
+  };
+}
+
+async function downloadInput(taskId, targetPath) {
+  const response = await fetch(`${fileServiceUrl}/api/worker/tasks/${taskId}/input`, {
+    headers: workerFileHeaders(),
+    signal: AbortSignal.timeout(120000)
+  });
+
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new Error("Не вдалося отримати PPTX з основного сервера.");
+  }
+
+  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(targetPath, { flags: "wx" }));
+}
+
+async function sendOutput(taskId, sourcePath) {
+  const response = await fetch(`${fileServiceUrl}/api/worker/tasks/${taskId}/output`, {
+    method: "POST",
+    headers: { ...workerFileHeaders(), "Content-Type": "application/pdf" },
+    body: fs.createReadStream(sourcePath),
+    duplex: "half",
+    signal: AbortSignal.timeout(120000)
+  });
+
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error("Не вдалося зберегти PDF на основному сервері.");
+  }
+  await response.body?.cancel();
+}
+
 async function convertTask(task) {
   const inputName = task.storage_name;
   const validName = typeof inputName === "string" && /^[0-9a-f-]{36}\.pptx$/.test(inputName);
-  const sourcePath = validName ? path.join(uploadDir, inputName) : null;
+  let sourcePath = validName ? path.join(uploadDir, inputName) : null;
   const pdfName = `${crypto.randomUUID()}.pdf`;
   const stagedPath = path.join(uploadDir, `${pdfName}.part`);
   const finalPath = path.join(uploadDir, pdfName);
   let tempDir;
   let outputSaved = false;
+  const transferHeartbeat = fileServiceUrl ? setInterval(async () => {
+    try {
+      await updateHeartbeat(task.id);
+    } catch (error) {
+      console.error(`[${instance}] Cannot update task ${task.id}:`, error.message);
+    }
+  }, 2000) : null;
 
   try {
     if (!validName) {
       throw new Error("Файл задачі не знайдено.");
+    }
+
+    if (fileServiceUrl) {
+      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webproject-"));
+      sourcePath = path.join(tempDir, inputName);
+      await downloadInput(task.id, sourcePath);
     }
 
     const inputInfo = await fs.promises.stat(sourcePath);
@@ -267,7 +321,9 @@ async function convertTask(task) {
       throw new Error("Worker зупинено під час конвертації.");
     }
 
-    tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webproject-"));
+    if (!tempDir) {
+      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "webproject-"));
+    }
     console.log(`[${instance}] Starting task ${task.id}`);
     const result = await runLibreOffice(task.id, sourcePath, tempDir);
 
@@ -291,20 +347,26 @@ async function convertTask(task) {
       throw new Error("Створений файл не є PDF.");
     }
 
-    await fs.promises.copyFile(generatedPath, stagedPath);
-    await fs.promises.rename(stagedPath, finalPath);
-
-    const saved = await pool.query(
-      `UPDATE tasks SET status = 'completed', progress = 100,
-         output_name = $1, finished_at = NOW(), updated_at = NOW()
-       WHERE id = $2 AND status = 'processing' AND worker_name = $3
-       RETURNING id`,
-      [pdfName, task.id, instance]
-    );
-
-    if (saved.rowCount > 0) {
+    if (fileServiceUrl) {
+      await sendOutput(task.id, generatedPath);
       outputSaved = true;
       console.log(`[${instance}] Completed task ${task.id}`);
+    } else {
+      await fs.promises.copyFile(generatedPath, stagedPath);
+      await fs.promises.rename(stagedPath, finalPath);
+
+      const saved = await pool.query(
+        `UPDATE tasks SET status = 'completed', progress = 100,
+           output_name = $1, finished_at = NOW(), updated_at = NOW()
+         WHERE id = $2 AND status = 'processing' AND worker_name = $3
+         RETURNING id`,
+        [pdfName, task.id, instance]
+      );
+
+      if (saved.rowCount > 0) {
+        outputSaved = true;
+        console.log(`[${instance}] Completed task ${task.id}`);
+      }
     }
   } catch (error) {
     console.error(`[${instance}] Task ${task.id} failed:`, error.message);
@@ -333,6 +395,9 @@ async function convertTask(task) {
       console.error(`[${instance}] Could not save failure:`, dbError.message);
     }
   } finally {
+    if (transferHeartbeat) {
+      clearInterval(transferHeartbeat);
+    }
     if (tempDir) {
       await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(console.error);
     }
@@ -344,11 +409,17 @@ async function convertTask(task) {
 }
 
 async function run() {
+  if (fileServiceUrl && (workerSecret.length < 32 || !/^https?:\/\//.test(fileServiceUrl))) {
+    throw new Error("Для віддаленого worker потрібні WORKER_FILES_URL і WORKER_SHARED_SECRET (від 32 символів).");
+  }
+
   console.log(`[${instance}] Waiting for tasks`);
   while (!stopping) {
     try {
       await recoverInterruptedTasks();
-      await cleanupStoredFiles();
+      if (!fileServiceUrl) {
+        await cleanupStoredFiles();
+      }
       const task = await takeTask();
       if (task) {
         await convertTask(task);

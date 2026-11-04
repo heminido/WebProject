@@ -12,6 +12,8 @@ const scrypt = promisify(crypto.scrypt);
 const sessionLifetime = 7 * 24 * 60 * 60;
 const activeTaskLimit = 3;
 const maxUploadSize = 30 * 1024 * 1024;
+const maxPdfSize = 100 * 1024 * 1024;
+const workerSecret = process.env.WORKER_SHARED_SECRET || "";
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 const passwordOptions = { N: 65536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
 
@@ -203,6 +205,169 @@ async function saveUploadedFile(request) {
   return { storageName, finalPath, size };
 }
 
+function authorizedWorker(request) {
+  if (workerSecret.length < 32) {
+    return null;
+  }
+
+  const name = request.headers["x-worker-name"];
+  const provided = request.headers.authorization || "";
+  const expected = `Bearer ${workerSecret}`;
+  if (typeof name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
+    return null;
+  }
+
+  const actualBytes = Buffer.from(provided);
+  const expectedBytes = Buffer.from(expected);
+  if (actualBytes.length !== expectedBytes.length || !crypto.timingSafeEqual(actualBytes, expectedBytes)) {
+    return null;
+  }
+
+  return name;
+}
+
+async function saveWorkerPdf(request) {
+  await fs.promises.mkdir(uploadDir, { recursive: true });
+
+  const fileName = `${crypto.randomUUID()}.pdf`;
+  const temporaryPath = path.join(uploadDir, `${fileName}.part`);
+  const finalPath = path.join(uploadDir, fileName);
+  const file = await fs.promises.open(temporaryPath, "wx");
+  let size = 0;
+  let signature = Buffer.alloc(0);
+
+  try {
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > maxPdfSize) {
+        const error = new Error("PDF перевищує ліміт 100 МіБ.");
+        error.statusCode = 413;
+        throw error;
+      }
+      if (signature.length < 5) {
+        signature = Buffer.concat([signature, chunk.subarray(0, 5 - signature.length)]);
+      }
+
+      let offset = 0;
+      while (offset < chunk.length) {
+        const result = await file.write(chunk, offset, chunk.length - offset);
+        offset += result.bytesWritten;
+      }
+    }
+
+    if (size < 8 || signature.toString() !== "%PDF-") {
+      const error = new Error("Результат не є PDF.");
+      error.statusCode = 400;
+      throw error;
+    }
+  } catch (error) {
+    await file.close();
+    await fs.promises.rm(temporaryPath, { force: true });
+    throw error;
+  }
+
+  await file.close();
+  try {
+    await fs.promises.rename(temporaryPath, finalPath);
+  } catch (error) {
+    await fs.promises.rm(temporaryPath, { force: true });
+    throw error;
+  }
+  return { fileName, finalPath };
+}
+
+async function handleWorkerFile(request, response) {
+  const match = request.url?.match(/^\/api\/worker\/tasks\/(\d{1,19})\/(input|output)$/);
+  if (!match) {
+    return false;
+  }
+
+  const name = authorizedWorker(request);
+  if (!name) {
+    sendJson(response, 401, { error: "Доступ заборонено." });
+    return true;
+  }
+
+  const taskId = match[1];
+  const action = match[2];
+  if ((action === "input" && request.method !== "GET") ||
+      (action === "output" && request.method !== "POST")) {
+    sendJson(response, 405, { error: "Метод не підтримується." });
+    return true;
+  }
+
+  const result = await pool.query(
+    `SELECT storage_name FROM tasks
+     WHERE id = $1 AND status = 'processing' AND worker_name = $2`,
+    [taskId, name]
+  );
+  if (result.rowCount === 0) {
+    sendJson(response, 409, { error: "Задача не обробляється цим worker." });
+    return true;
+  }
+
+  if (action === "input") {
+    const storedName = result.rows[0].storage_name;
+    if (!storedName || !/^[0-9a-f-]{36}\.pptx$/.test(storedName)) {
+      sendJson(response, 404, { error: "PPTX не знайдено." });
+      return true;
+    }
+
+    const sourcePath = path.join(uploadDir, storedName);
+    const info = await fs.promises.stat(sourcePath).catch(() => null);
+    if (!info || !info.isFile() || info.size > maxUploadSize) {
+      sendJson(response, 404, { error: "PPTX відсутній у сховищі." });
+      return true;
+    }
+
+    const stream = fs.createReadStream(sourcePath);
+    stream.on("error", () => response.destroy());
+    response.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": info.size,
+      "Cache-Control": "no-store"
+    });
+    stream.pipe(response);
+    return true;
+  }
+
+  if (request.headers["content-type"] !== "application/pdf") {
+    sendJson(response, 415, { error: "Очікується PDF." });
+    return true;
+  }
+
+  let saved;
+  let attached = false;
+  try {
+    saved = await saveWorkerPdf(request);
+    const updated = await pool.query(
+      `UPDATE tasks SET status = 'completed', progress = 100,
+         output_name = $1, finished_at = NOW(), updated_at = NOW()
+       WHERE id = $2 AND status = 'processing' AND worker_name = $3
+       RETURNING id`,
+      [saved.fileName, taskId, name]
+    );
+    if (updated.rowCount === 0) {
+      sendJson(response, 409, { error: "Задачу вже змінено." });
+      return true;
+    }
+
+    attached = true;
+    sendJson(response, 200, { completed: true });
+  } catch (error) {
+    if (error.statusCode) {
+      sendJson(response, error.statusCode, { error: error.message });
+    } else {
+      throw error;
+    }
+  } finally {
+    if (saved && !attached) {
+      await fs.promises.rm(saved.finalPath, { force: true });
+    }
+  }
+  return true;
+}
+
 async function createTask(user, filename, response) {
   const client = await pool.connect();
 
@@ -240,6 +405,10 @@ async function createTask(user, filename, response) {
 }
 
 async function handleRequest(request, response) {
+  if (await handleWorkerFile(request, response)) {
+    return;
+  }
+
   if (request.method === "GET" && request.url === "/api/health") {
     sendJson(response, 200, { status: "ok", instance, port });
     return;

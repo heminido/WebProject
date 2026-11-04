@@ -1,0 +1,7 @@
+services:
+  db:
+    ports:
+      - "${REMOTE_BIND_IP:?Set REMOTE_BIND_IP to the private VPN address}:5432:5432"
+  nginx:
+    ports:
+      - "${REMOTE_BIND_IP:?Set REMOTE_BIND_IP to the private VPN address}:8081:80"

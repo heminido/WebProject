@@ -1,0 +1,18 @@
+services:
+  worker_remote:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      INSTANCE_NAME: "${REMOTE_WORKER_NAME:-worker-remote-1}"
+      DB_HOST: "${REMOTE_DB_HOST:?Set REMOTE_DB_HOST}"
+      DB_PORT: 5432
+      DB_NAME: webproject
+      DB_USER: webproject
+      DB_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+      WORKER_FILES_URL: "${REMOTE_FILES_URL:?Set REMOTE_FILES_URL}"
+      WORKER_SHARED_SECRET: "${WORKER_SHARED_SECRET:?Set WORKER_SHARED_SECRET}"
+    mem_limit: 1g
+    cpus: 1.0
+    init: true
+    restart: unless-stopped
