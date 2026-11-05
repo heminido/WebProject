@@ -610,7 +610,8 @@ async function handleRequest(request, response) {
     return;
   }
 
-  if (request.url === "/api/tasks" && (request.method === "GET" || request.method === "POST")) {
+  if ((request.url === "/api/tasks" || request.url?.startsWith("/api/tasks?")) &&
+      (request.method === "GET" || request.method === "POST")) {
     const user = await currentUser(request);
     if (!user) {
       sendJson(response, 401, { error: "Спочатку увійдіть в акаунт." });
@@ -618,11 +619,53 @@ async function handleRequest(request, response) {
     }
 
     if (request.method === "GET") {
-      const result = await pool.query(
-        "SELECT id, source_filename, conversion_type, status, progress, processing_stage, created_at, (storage_name IS NOT NULL) AS has_file, file_size_bytes, (output_name IS NOT NULL) AS has_output, worker_name, error_message FROM tasks WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 30",
+      const url = new URL(request.url, "http://localhost");
+      const pageText = url.searchParams.get("page") || "1";
+      const filter = url.searchParams.get("filter") || "all";
+      const filters = {
+        all: "",
+        active: "AND status IN ('draft', 'queued', 'processing')",
+        completed: "AND status = 'completed'",
+        other: "AND status IN ('failed', 'cancelled')"
+      };
+
+      if (!/^[1-9][0-9]{0,5}$/.test(pageText) || !Object.hasOwn(filters, filter)) {
+        sendJson(response, 400, { error: "Некоректна сторінка або фільтр історії." });
+        return;
+      }
+
+      const pageNumber = Number(pageText);
+      const pageSize = 30;
+      const statsResult = await pool.query(
+        `SELECT COUNT(*)::INTEGER AS total,
+           COUNT(*) FILTER (WHERE status IN ('draft', 'queued', 'processing'))::INTEGER AS active,
+           COUNT(*) FILTER (WHERE status = 'completed')::INTEGER AS completed,
+           COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled'))::INTEGER AS other
+         FROM tasks WHERE user_id = $1`,
         [user.id]
       );
-      sendJson(response, 200, { tasks: result.rows, instance });
+      const stats = statsResult.rows[0];
+      const filteredCount = filter === "all" ? stats.total : stats[filter];
+      const fields = `id, source_filename, conversion_type, status, progress, processing_stage,
+        created_at, (storage_name IS NOT NULL) AS has_file, file_size_bytes,
+        (output_name IS NOT NULL) AS has_output, worker_name, error_message`;
+      const result = await pool.query(
+        `SELECT ${fields} FROM tasks WHERE user_id = $1 ${filters[filter]}
+         ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
+        [user.id, pageSize, (pageNumber - 1) * pageSize]
+      );
+      let latestTask = result.rows[0] || null;
+      if (filter !== "all" || pageNumber !== 1) {
+        const latestResult = await pool.query(
+          `SELECT ${fields} FROM tasks WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+          [user.id]
+        );
+        latestTask = latestResult.rows[0] || null;
+      }
+      sendJson(response, 200, {
+        tasks: result.rows, latestTask, stats, filteredCount,
+        page: pageNumber, pageSize, instance
+      });
       return;
     }
 

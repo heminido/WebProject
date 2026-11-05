@@ -183,6 +183,9 @@ h3 { margin: 0; font: normal 27px/1.15 var(--serif); letter-spacing: -.03em; }
 .task-error { margin: 14px 0 0; padding: 12px 14px; border-left: 3px solid var(--accent); background: #f9e9e4; color: #9c2d2c; font-size: 12px; line-height: 1.6; }
 .task-note { margin: 13px 0 0; color: var(--muted); font-size: 12px; }
 .task-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
+.history-pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 14px; padding: 22px 0 2px; }
+.history-pagination span { color: var(--muted); font: 12px var(--mono); }
+.history-pagination button:disabled { opacity: .4; }
 .empty-history { margin: 18px 0 0; padding: 50px 20px; border: 1px dashed #aeb6ac; background: #f2f0e9; text-align: center; }
 .empty-icon { margin-bottom: 12px; font: 39px var(--serif); }
 .empty-history strong { font-size: 17px; }

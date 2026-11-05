@@ -22,12 +22,18 @@
     const statCompleted = document.getElementById("stat-completed");
     const emptyHistory = document.getElementById("empty-history");
     const emptyHistoryMessage = document.getElementById("empty-history-message");
+    const historyPagination = document.getElementById("history-pagination");
+    const historyPrev = document.getElementById("history-prev");
+    const historyNext = document.getElementById("history-next");
+    const historyPage = document.getElementById("history-page");
     const latestTaskName = document.getElementById("latest-task-name");
     const latestTaskMeta = document.getElementById("latest-task-meta");
     const latestTaskStatus = document.getElementById("latest-task-status");
     const latestDownload = document.getElementById("latest-download");
     const filterButtons = Array.from(document.querySelectorAll("[data-filter]"));
     let currentFilter = "all";
+    let currentPage = 1;
+    let tasksRequestVersion = 0;
     let currentUploadTaskId = null;
     let canManageTasks = false;
     let uploadingFile = false;
@@ -156,6 +162,9 @@
         uploadProgressContainer.hidden = true;
         currentUploadTaskId = null;
         clearTimeout(taskRefreshTimer);
+        tasksRequestVersion++;
+        currentPage = 1;
+        historyPagination.hidden = true;
         taskList.replaceChildren();
         emptyHistory.hidden = true;
         statTotal.textContent = "—";
@@ -229,19 +238,33 @@
 
     async function loadTasks() {
       clearTimeout(taskRefreshTimer);
+      const requestVersion = ++tasksRequestVersion;
+      const requestedPage = currentPage;
+      const requestedFilter = currentFilter;
       if (taskList.children.length === 0) {
         tasksResult.textContent = "Завантажуємо історію...";
       }
       try {
-        const data = await apiRequest("/api/tasks");
-        if (!canManageTasks) return;
-        updateLatestTask(data.tasks);
+        const data = await apiRequest(`/api/tasks?page=${requestedPage}&filter=${requestedFilter}`);
+        if (!canManageTasks || requestVersion !== tasksRequestVersion) return;
+        const pageCount = Math.max(1, Math.ceil(data.filteredCount / data.pageSize));
+        if (currentPage > pageCount) {
+          currentPage = pageCount;
+          await loadTasks();
+          return;
+        }
+        updateLatestTask(data.latestTask ? [data.latestTask] : []);
+        historyPagination.hidden = pageCount <= 1;
+        historyPrev.disabled = currentPage === 1;
+        historyNext.disabled = currentPage >= pageCount;
+        historyPage.textContent = `Сторінка ${currentPage} із ${pageCount}`;
         if (currentUploadTaskId !== null) {
-          const trackedTask = data.tasks.find((task) => String(task.id) === String(currentUploadTaskId));
-          if (!trackedTask) {
+          const trackedTask = data.tasks.find((task) => String(task.id) === String(currentUploadTaskId)) ||
+            (String(data.latestTask?.id) === String(currentUploadTaskId) ? data.latestTask : null);
+          if (!trackedTask && requestedPage === 1 && requestedFilter === "all") {
             uploadProgressContainer.hidden = true;
             currentUploadTaskId = null;
-          } else if (["queued", "processing", "completed"].includes(trackedTask.status)) {
+          } else if (trackedTask && ["queued", "processing", "completed"].includes(trackedTask.status)) {
             updateTaskProgress(uploadProgressContainer, trackedTask);
           } else if (trackedTask) {
             uploadProgressText.textContent = trackedTask.status === "failed"
@@ -254,15 +277,10 @@
         }
         const previousItems = Array.from(taskList.children);
         const nextItems = [];
-        statTotal.textContent = String(data.tasks.length);
-        statActive.textContent = String(data.tasks.filter((task) => ["draft", "queued", "processing"].includes(task.status)).length);
-        statCompleted.textContent = String(data.tasks.filter((task) => task.status === "completed").length);
-        const visibleTasks = data.tasks.filter((task) => {
-          if (currentFilter === "active") return ["draft", "queued", "processing"].includes(task.status);
-          if (currentFilter === "completed") return task.status === "completed";
-          if (currentFilter === "other") return ["failed", "cancelled"].includes(task.status);
-          return true;
-        });
+        statTotal.textContent = String(data.stats.total);
+        statActive.textContent = String(data.stats.active);
+        statCompleted.textContent = String(data.stats.completed);
+        const visibleTasks = data.tasks;
 
         for (const task of visibleTasks) {
           const signature = [task.status, task.has_file, task.has_output,
@@ -407,18 +425,22 @@
         }
 
         emptyHistory.hidden = visibleTasks.length > 0;
-        emptyHistoryMessage.textContent = data.tasks.length
+        emptyHistoryMessage.textContent = data.stats.total
           ? "Немає задач із таким статусом."
           : "Завантаж PPTX, щоб створити свою першу задачу.";
-        tasksResult.textContent = data.tasks.length
-          ? `${data.tasks.length} останніх задач · API: ${data.instance}`
-          : "Задач поки немає.";
+        const first = (currentPage - 1) * data.pageSize + 1;
+        const last = Math.min(currentPage * data.pageSize, data.filteredCount);
+        tasksResult.textContent = data.filteredCount
+          ? `Задачі ${first}–${last} із ${data.filteredCount} · API: ${data.instance}`
+          : "Задач із таким статусом немає.";
 
-        if (data.tasks.some((task) => task.status === "queued" || task.status === "processing")) {
+        if (data.stats.active > 0) {
           taskRefreshTimer = setTimeout(loadTasks, 1000);
         }
       } catch (error) {
-        tasksResult.textContent = error.message;
+        if (requestVersion === tasksRequestVersion) {
+          tasksResult.textContent = error.message;
+        }
       }
     }
 
@@ -488,6 +510,7 @@
     }
 
     function selectFilter(filter) {
+      if (currentFilter !== filter) currentPage = 1;
       currentFilter = filter;
       for (const button of filterButtons) {
         const active = button.dataset.filter === filter;
@@ -502,6 +525,20 @@
         if (canManageTasks) loadTasks();
       });
     }
+
+    historyPrev.addEventListener("click", () => {
+      if (currentPage > 1) {
+        currentPage--;
+        loadTasks();
+      }
+    });
+
+    historyNext.addEventListener("click", () => {
+      if (!historyNext.disabled) {
+        currentPage++;
+        loadTasks();
+      }
+    });
 
     conversionFileInput.addEventListener("change", () => {
       uploadProgressContainer.hidden = true;
@@ -550,6 +587,7 @@
         uploadProgressText.textContent = "PPTX завантажено. Очікуємо виконання задачі...";
         conversionFileInput.value = "";
         selectFilter("all");
+        currentPage = 1;
         await loadTasks();
       } catch (error) {
         uploadProgressContainer.hidden = true;

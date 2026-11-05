@@ -53,7 +53,7 @@ If migration `004_stages.sql` has not been applied yet, run it once:
 docker compose exec -T db psql -v ON_ERROR_STOP=1 -U webproject -d webproject < migrations/004_stages.sql
 ```
 
-For an existing installation, **add the eight new limit variables from `.env.example` to your existing `.env`**. Do not overwrite your existing password or worker secret. Then run `docker compose up -d --build` to recreate the API, worker and Nginx services. No SQL migration is required. Never run `docker compose down -v`: it removes database and file volumes.
+For an existing installation, keep the limit variables from `.env.example` in your existing `.env`. Do not overwrite your password or worker secret. Run `docker compose up -d --build` after configuration changes. For updates that change only `server.js` and the frontend, rebuilding `api1` and `api2` is enough. No SQL migration is required. Never run `docker compose down -v`: it removes database and file volumes.
 
 ## Check load balancing
 
@@ -70,7 +70,7 @@ Configure limits in `.env` (use `.env.example` for the variable names):
 - `CONVERSION_TIMEOUT_SECONDS=120`: conversion time limit.
 - `WORKER_MEMORY=1g` and `WORKER_CPUS=1.0`: resource limits for each worker.
 
-The browser gets only public limits from `/api/config`; database passwords and other secrets are not returned. The website displays the latest 30 tasks. Completed, failed, cancelled and old draft tasks can be deleted individually or cleared from history with their files. Active tasks must be cancelled first.
+The browser gets only public limits from `/api/config`; database passwords and other secrets are not returned. The history loads 30 tasks per page, with filters and navigation to older results. Statistics cover the full history. Completed, failed, cancelled and old draft tasks can be deleted individually or cleared from history with their files. Active tasks must be cancelled first.
 
 ## Optional remote worker
 

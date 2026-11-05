@@ -108,8 +108,8 @@
           <div><p class="panel-kicker">04 / ІСТОРІЯ</p><h2 id="history-heading">Мої конвертації</h2><p class="panel-subtitle">Переглядай етапи виконання, завантажуй результати або видаляй задачі разом із файлами.</p></div>
           <div class="history-controls"><button class="button button-outline button-small" id="reload-tasks" type="button" disabled>↻ Оновити</button><button class="button button-danger button-small" id="clear-history" type="button" disabled>Очистити історію</button></div>
         </div>
-        <div class="metrics" aria-label="Статистика останніх задач">
-          <div class="metric"><span>УСЬОГО</span><strong id="stat-total">—</strong><small>Серед останніх 30 задач</small></div>
+        <div class="metrics" aria-label="Статистика всіх задач">
+          <div class="metric"><span>УСЬОГО</span><strong id="stat-total">—</strong><small>За весь час</small></div>
           <div class="metric"><span>АКТИВНІ</span><strong id="stat-active">—</strong><small>У черзі або в роботі</small></div>
           <div class="metric"><span>ГОТОВО</span><strong id="stat-completed">—</strong><small>Завершені конвертації</small></div>
         </div>
@@ -124,6 +124,11 @@
         </div>
         <ul id="task-list" aria-label="Мої задачі"></ul>
         <div class="empty-history" id="empty-history" hidden><div class="empty-icon" aria-hidden="true">▤</div><strong>Тут поки порожньо</strong><p id="empty-history-message">Немає задач для вибраного фільтра.</p></div>
+        <div id="history-pagination" class="history-pagination" hidden>
+          <button class="button button-outline button-small" id="history-prev" type="button">← Новіші</button>
+          <span id="history-page" aria-live="polite"></span>
+          <button class="button button-outline button-small" id="history-next" type="button">Старіші →</button>
+        </div>
       </section>
 
       <section class="panel system-panel" id="infrastructure" aria-labelledby="system-heading">
