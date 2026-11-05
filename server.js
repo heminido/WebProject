@@ -4,15 +4,18 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { promisify } = require("node:util");
 const { Pool } = require("pg");
+const limits = require("./limits");
 
 const port = Number(process.env.PORT) || 3000;
 const instance = process.env.INSTANCE_NAME || `api-${port}`;
 const page = fs.readFileSync(path.join(__dirname, "public", "index.html"), "utf8");
+const stylesheet = fs.readFileSync(path.join(__dirname, "public", "style.css"), "utf8");
+const frontendScript = fs.readFileSync(path.join(__dirname, "public", "app.js"), "utf8");
 const scrypt = promisify(crypto.scrypt);
 const sessionLifetime = 7 * 24 * 60 * 60;
-const activeTaskLimit = 3;
-const maxUploadSize = 30 * 1024 * 1024;
-const maxPdfSize = 100 * 1024 * 1024;
+const activeTaskLimit = limits.maxActiveTasks;
+const maxUploadSize = limits.maxPptxBytes;
+const maxPdfSize = limits.maxPdfBytes;
 const workerSecret = process.env.WORKER_SHARED_SECRET || "";
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 const passwordOptions = { N: 65536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
@@ -194,7 +197,7 @@ async function saveUploadedFile(request) {
   if (tooLarge || size === 0 || signature.toString("hex") !== "504b0304") {
     await fs.promises.rm(temporaryPath, { force: true });
     const error = new Error(tooLarge
-      ? "Файл завеликий. Максимум 30 МіБ."
+      ? `Файл завеликий. Максимум ${limits.maxPptxMiB} МіБ.`
       : "Файл не схожий на PPTX (ZIP)."
     );
     error.statusCode = tooLarge ? 413 : 400;
@@ -240,7 +243,7 @@ async function saveWorkerPdf(request) {
     for await (const chunk of request) {
       size += chunk.length;
       if (size > maxPdfSize) {
-        const error = new Error("PDF перевищує ліміт 100 МіБ.");
+        const error = new Error(`PDF перевищує ліміт ${limits.maxPdfMiB} МіБ.`);
         error.statusCode = 413;
         throw error;
       }
@@ -479,6 +482,15 @@ async function handleRequest(request, response) {
     return;
   }
 
+  if (request.method === "GET" && request.url === "/api/config") {
+    sendJson(response, 200, {
+      maxPptxMiB: limits.maxPptxMiB,
+      maxActiveTasks: limits.maxActiveTasks,
+      conversionTimeoutSeconds: limits.conversionTimeoutSeconds
+    });
+    return;
+  }
+
   if (request.method === "GET" && request.url === "/api/health") {
     sendJson(response, 200, { status: "ok", instance, port });
     return;
@@ -498,6 +510,18 @@ async function handleRequest(request, response) {
   if (request.method === "GET" && request.url === "/") {
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(page);
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/style.css") {
+    response.writeHead(200, { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-cache" });
+    response.end(stylesheet);
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/app.js") {
+    response.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" });
+    response.end(frontendScript);
     return;
   }
 

@@ -7,14 +7,15 @@ const { promisify } = require("node:util");
 const { pipeline } = require("node:stream/promises");
 const { Readable } = require("node:stream");
 const { Pool } = require("pg");
+const limits = require("./limits");
 
 const instance = process.env.INSTANCE_NAME || "worker";
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 const fileServiceUrl = (process.env.WORKER_FILES_URL || "").replace(/\/$/, "");
 const workerSecret = process.env.WORKER_SHARED_SECRET || "";
-const conversionTimeout = 120000;
-const maxPdfSize = 100 * 1024 * 1024;
-const maxUncompressedSize = 150 * 1024 * 1024;
+const conversionTimeout = limits.conversionTimeoutSeconds * 1000;
+const maxPdfSize = limits.maxPdfBytes;
+const maxUncompressedSize = limits.maxUncompressedBytes;
 const runCommand = promisify(execFile);
 let stopping = false;
 let runningProcess = null;
@@ -144,7 +145,7 @@ async function validatePptx(sourcePath) {
 
     fileCount++;
     totalSize += Number(match[1]);
-    if (fileCount > 2000 || totalSize > maxUncompressedSize) {
+    if (fileCount > limits.maxPptxEntries || totalSize > maxUncompressedSize) {
       throw new Error("PPTX перевищує ліміт складності.");
     }
 
@@ -236,7 +237,7 @@ async function runLibreOffice(id, sourcePath, temporaryDir) {
       return "cancelled";
     }
     if (timedOut) {
-      throw new Error("Перевищено ліміт часу (120 с).");
+      throw new Error(`Перевищено ліміт часу (${limits.conversionTimeoutSeconds} с).`);
     }
     if (stopping) {
       throw new Error("Worker зупинено під час конвертації.");
@@ -318,7 +319,7 @@ async function convertTask(task) {
     }
 
     const inputInfo = await fs.promises.stat(sourcePath);
-    if (!inputInfo.isFile() || inputInfo.size > 30 * 1024 * 1024) {
+    if (!inputInfo.isFile() || inputInfo.size > limits.maxPptxBytes) {
       throw new Error("Неприпустимий розмір PPTX.");
     }
     await validatePptx(sourcePath);
@@ -389,7 +390,7 @@ async function convertTask(task) {
       "Неприпустимий розмір PPTX.",
       "Некоректний PPTX-файл.",
       "PPTX перевищує ліміт складності.",
-      "Перевищено ліміт часу (120 с).",
+      `Перевищено ліміт часу (${limits.conversionTimeoutSeconds} с).`,
       "Worker зупинено під час конвертації.",
       "Не вдалося конвертувати PPTX. Перевірте файл.",
       "Не вдалося створити коректний PDF.",

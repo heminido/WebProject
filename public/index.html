@@ -3,662 +3,140 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Document Processing System</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 40px 20px;
-      font-family: Arial, sans-serif;
-      color: #202124;
-      background: #f6f7f9;
-    }
-
-    main {
-      max-width: 700px;
-      margin: 40px auto;
-      padding: 32px;
-      background: white;
-      border: 1px solid #e2e4e8;
-      border-radius: 12px;
-    }
-
-    h1 { margin-top: 0; }
-    h2 { margin-top: 30px; }
-    p { line-height: 1.6; }
-
-    input {
-      display: block;
-      box-sizing: border-box;
-      width: 100%;
-      max-width: 360px;
-      margin: 8px 0 14px;
-      padding: 10px;
-      border: 1px solid #c4c8ce;
-      border-radius: 6px;
-      font: inherit;
-    }
-
-    button {
-      margin: 0 8px 8px 0;
-      padding: 11px 16px;
-      border: none;
-      border-radius: 6px;
-      color: white;
-      background: #2563eb;
-      cursor: pointer;
-    }
-
-    button:disabled {
-      opacity: 0.6;
-      cursor: wait;
-    }
-
-    a.download-link {
-      display: inline-block;
-      margin: 0 8px 8px 0;
-      padding: 11px 16px;
-      border-radius: 6px;
-      color: white;
-      background: #2563eb;
-      text-decoration: none;
-    }
-
-    section {
-      border-top: 1px solid #e2e4e8;
-      margin-top: 24px;
-    }
-
-    #task-list {
-      list-style: none;
-      padding: 0;
-    }
-
-    #task-list li {
-      padding: 12px;
-      margin-bottom: 10px;
-      border: 1px solid #e2e4e8;
-      border-radius: 6px;
-    }
-
-    .task-progress {
-      display: flex;
-      gap: 5px;
-      width: 100%;
-      max-width: 440px;
-      height: 12px;
-      margin-top: 12px;
-    }
-
-    .task-progress-step {
-      position: relative;
-      overflow: hidden;
-      flex: 1;
-      border-radius: 6px;
-      background: #e2e8f0;
-    }
-
-    .task-progress-step::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: #16a34a;
-      transform: scaleX(0);
-      transform-origin: left;
-      transition: transform 0.4s ease;
-    }
-
-    .task-progress-step.done::before {
-      transform: scaleX(1);
-    }
-
-    .task-progress-step.uploading::before {
-      background: #2563eb;
-      transform: scaleX(var(--upload-ratio, 0));
-    }
-
-    .task-progress-step.current::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg, #93c5fd, #2563eb, #93c5fd);
-      background-size: 200% 100%;
-      animation: progress-pulse 1.6s linear infinite;
-    }
-
-    .task-stage {
-      margin: 8px 0 4px;
-      color: #475569;
-      font-size: 14px;
-    }
-
-    @keyframes progress-pulse {
-      from { background-position: 200% 0; }
-      to { background-position: 0 0; }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .task-progress-step::before {
-        transition: none;
-      }
-
-      .task-progress-step.current::after {
-        animation: none;
-        background: #2563eb;
-      }
-    }
-  </style>
+  <meta name="theme-color" content="#f2f0e8">
+  <title>Конвертер PPTX у PDF</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main>
-    <h1>Document Processing System</h1>
-    <p>Реєстрація, задачі та асинхронна конвертація PPTX у PDF.</p>
+  <div class="page" id="top">
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Конвертер PPTX у PDF — на початок">
+        <span class="brand-symbol" aria-hidden="true">P.</span>
+        <span class="brand-name">PPTX <span class="brand-arrow">→</span> PDF<small>КОНВЕРТЕР ПРЕЗЕНТАЦІЙ</small></span>
+      </a>
+      <nav class="top-nav" aria-label="Навігація">
+        <a href="#upload">Конвертація</a>
+        <a href="#history">Історія</a>
+        <a href="#infrastructure">Система</a>
+      </nav>
+      <a class="account-nav" href="#account">Акаунт <span aria-hidden="true">↗</span></a>
+    </header>
 
-    <section>
-      <h2>Обліковий запис</h2>
-      <label for="nickname">Нікнейм</label>
-      <input id="nickname" autocomplete="username" minlength="3" maxlength="24" placeholder="Наприклад, student123">
-      <label for="password">Пароль</label>
-      <input id="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" placeholder="Від 8 символів">
-      <button id="register" type="button">Зареєструватися</button>
-      <button id="login" type="button">Увійти</button>
-      <button id="logout" type="button">Вийти</button>
-      <p id="account-result" role="status">Перевіряємо сесію...</p>
-      <button id="check-session" type="button">Перевірити сесію (10 запитів)</button>
-      <p id="session-result" role="status"></p>
-    </section>
-
-    <section>
-      <h2>Мої задачі</h2>
-      <p>Вибери PPTX (до 30 МіБ) та запусти конвертацію в PDF.</p>
-      <label for="conversion-file">PPTX-файл</label>
-      <input id="conversion-file" type="file" accept=".pptx" disabled>
-      <button id="convert-file" type="button" disabled>Завантажити та конвертувати</button>
-      <button id="clear-selection" type="button" disabled>Скасувати вибір</button>
-      <button id="reload-tasks" type="button" disabled>Оновити історію</button>
-      <button id="clear-history" type="button" disabled>Очистити історію</button>
-      <div id="upload-progress-container" hidden>
-        <div id="upload-progress" class="task-progress" role="progressbar" aria-label="Завантаження PPTX" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <span class="task-progress-step uploading"></span>
-          <span class="task-progress-step"></span>
-          <span class="task-progress-step"></span>
-          <span class="task-progress-step"></span>
+    <main>
+      <section class="hero" aria-labelledby="hero-heading">
+        <div class="hero-copy">
+          <p class="hero-eyebrow"><span class="eyebrow-line"></span> PPTX → PDF / ОНЛАЙН-КОНВЕРТЕР</p>
+          <h1 id="hero-heading">Перетвори PPTX <em>у PDF.</em></h1>
+          <p>Завантаж презентацію, відстежуй виконання задачі та збережи готовий PDF. Усе в одному місці.</p>
+          <a class="hero-link" href="#upload">Перейти до конвертації <span aria-hidden="true">↗</span></a>
         </div>
-        <p id="upload-progress-text" class="task-stage" role="status"></p>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="visual-caption">ПЕРЕТВОРЕННЯ ФАЙЛУ</div>
+          <div class="visual-paper visual-from"><span>ВХІДНИЙ ФАЙЛ</span><strong>PPTX</strong><small>презентація</small></div>
+          <div class="visual-arrow">→</div>
+          <div class="visual-paper visual-to"><span>ГОТОВИЙ ФАЙЛ</span><strong>PDF</strong><small>документ</small></div>
+          <div class="visual-foot">PPTX / PDF</div>
+        </div>
+      </section>
+
+      <div class="facts" aria-label="Основні обмеження">
+        <div><strong id="fact-max-pptx">—</strong><span>Максимальний розмір PPTX</span></div>
+        <div><strong id="fact-max-tasks">—</strong><span>Одночасно на користувача</span></div>
+        <div><strong id="fact-timeout">—</strong><span>Ліміт часу конвертації</span></div>
       </div>
-      <p id="tasks-result" role="status">Увійдіть, щоб переглянути задачі.</p>
-      <ul id="task-list"></ul>
-    </section>
 
-    <section>
-      <h2>Інфраструктура</h2>
-      <button id="check-server" type="button">Перевірити сервер</button>
-      <button id="check-balance" type="button">Перевірити балансування (10 запитів)</button>
-      <button id="check-database" type="button">Перевірити PostgreSQL (6 запитів)</button>
-      <p id="result" role="status"></p>
-      <p id="balance-result" role="status"></p>
-      <p id="database-result" role="status"></p>
-    </section>
-  </main>
+      <section class="panel account-panel" id="account" aria-labelledby="account-heading">
+        <div class="account-intro">
+          <p class="panel-kicker">01 / ОБЛІКОВИЙ ЗАПИС</p>
+          <h2 id="account-heading">Обліковий запис</h2>
+          <p class="panel-subtitle">Увійди або зареєструйся, щоб запускати конвертації та зберігати історію задач.</p>
+          <p id="account-result" role="status">Перевіряємо сесію...</p>
+        </div>
+        <div class="account-content">
+          <div id="account-fields">
+            <div class="auth-fields">
+              <div class="field-group"><label class="input-label" for="nickname">Нікнейм</label><input class="field" id="nickname" autocomplete="username" minlength="3" maxlength="24" placeholder="student123"></div>
+              <div class="field-group"><label class="input-label" for="password">Пароль</label><input class="field" id="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" placeholder="Від 8 символів"></div>
+            </div>
+            <div class="actions"><button class="button button-primary" id="login" type="button">Увійти</button><button class="button button-outline" id="register" type="button">Зареєструватися</button></div>
+          </div>
+          <div class="account-details"><div class="avatar" aria-hidden="true">✓</div><div><strong>Ви увійшли в акаунт</strong><small>Ваші задачі доступні з обох API-серверів</small></div></div>
+          <div class="account-footer">
+            <div class="actions"><button class="button button-secondary member-only" id="check-session" type="button">Перевірити сесію</button><button class="button button-outline member-only" id="logout" type="button">Вийти</button></div>
+            <p id="session-result" role="status"></p>
+          </div>
+        </div>
+      </section>
 
-  <script>
-    const nicknameInput = document.getElementById("nickname");
-    const passwordInput = document.getElementById("password");
-    const accountResult = document.getElementById("account-result");
-    const sessionResult = document.getElementById("session-result");
-    const result = document.getElementById("result");
-    const balanceResult = document.getElementById("balance-result");
-    const databaseResult = document.getElementById("database-result");
-    const conversionFileInput = document.getElementById("conversion-file");
-    const tasksResult = document.getElementById("tasks-result");
-    const taskList = document.getElementById("task-list");
-    const convertFileButton = document.getElementById("convert-file");
-    const clearSelectionButton = document.getElementById("clear-selection");
-    const clearHistoryButton = document.getElementById("clear-history");
-    const uploadProgressContainer = document.getElementById("upload-progress-container");
-    const uploadProgress = document.getElementById("upload-progress");
-    const uploadProgressText = document.getElementById("upload-progress-text");
-    let canManageTasks = false;
-    let uploadingFile = false;
-    const reloadTasksButton = document.getElementById("reload-tasks");
-    let taskRefreshTimer;
-    const processingStages = [
-      { key: "uploaded", label: "PPTX завантажено" },
-      { key: "preparing", label: "Перевірка PPTX" },
-      { key: "converting", label: "Конвертація PPTX у PDF" },
-      { key: "saving", label: "Збереження PDF" }
-    ];
+      <section class="conversion-section" id="upload" aria-labelledby="upload-heading">
+        <div class="section-intro"><p class="panel-kicker">02 / КОНВЕРТАЦІЯ</p><h2 id="upload-heading">Конвертація презентації</h2><p class="panel-subtitle">Вибери PPTX-файл. Після завантаження задача автоматично потрапить у чергу.</p></div>
+        <div class="conversion-grid">
+          <div class="panel upload-panel">
+            <div class="panel-title"><h3>Завантаження PPTX</h3><span class="mini-label" id="picker-limit">—</span></div>
+            <label class="file-picker" for="conversion-file">
+              <span class="file-symbol" aria-hidden="true">.pptx</span>
+              <span><strong id="selected-file-name">Обрати PPTX-файл</strong><small id="selected-file-meta">Натисни, щоб вибрати презентацію</small></span>
+              <input id="conversion-file" type="file" accept=".pptx" aria-label="Обрати PPTX-файл" disabled>
+            </label>
+            <p class="file-feedback" id="file-feedback" role="alert" hidden></p>
+            <div class="actions"><button class="button button-primary" id="convert-file" type="button" disabled>Завантажити й конвертувати <span aria-hidden="true">→</span></button><button class="button button-secondary" id="clear-selection" type="button" disabled>Скасувати вибір</button></div>
+            <div id="upload-progress-container" class="upload-feedback" hidden>
+              <div id="upload-progress" class="task-progress" role="progressbar" aria-label="Завантаження PPTX" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span class="task-progress-step uploading"></span><span class="task-progress-step"></span><span class="task-progress-step"></span><span class="task-progress-step"></span>
+              </div>
+              <p id="upload-progress-text" class="task-stage" role="status"></p>
+            </div>
+            <p class="upload-hint"><span aria-hidden="true">✓</span> Ліміт активних задач на користувача: <span id="hint-max-tasks">—</span></p>
+          </div>
+          <div class="panel result-panel" aria-labelledby="latest-heading">
+            <p class="panel-kicker">03 / СТАН ЗАДАЧІ</p>
+            <h3 id="latest-heading">Остання конвертація</h3>
+            <div class="latest-file">
+              <span class="latest-label">ФАЙЛ</span>
+              <strong id="latest-task-name">Задач поки немає</strong>
+              <span id="latest-task-meta">Після запуску тут з'явиться стан останньої задачі.</span>
+            </div>
+            <p class="latest-status" id="latest-task-status">Увійди, щоб побачити свої задачі.</p>
+            <a id="latest-download" class="button button-primary" href="#" hidden>Завантажити PDF <span aria-hidden="true">↗</span></a>
+            <a class="inline-link" href="#history">Усі задачі та етапи виконання <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </section>
 
-    async function apiRequest(url, options = {}) {
-      const response = await fetch(url, { cache: "no-store", ...options });
-      let data;
-      try {
-        data = await response.json();
-      } catch {
-        throw new Error(response.status === 413
-          ? "Файл завеликий. Максимум 30 МіБ."
-          : "Некоректна відповідь сервера.");
-      }
+      <section class="panel history-panel" id="history" aria-labelledby="history-heading">
+        <div class="history-header">
+          <div><p class="panel-kicker">04 / ІСТОРІЯ</p><h2 id="history-heading">Мої конвертації</h2><p class="panel-subtitle">Переглядай етапи виконання, завантажуй результати або видаляй задачі разом із файлами.</p></div>
+          <div class="history-controls"><button class="button button-outline button-small" id="reload-tasks" type="button" disabled>↻ Оновити</button><button class="button button-danger button-small" id="clear-history" type="button" disabled>Очистити історію</button></div>
+        </div>
+        <div class="metrics" aria-label="Статистика останніх задач">
+          <div class="metric"><span>УСЬОГО</span><strong id="stat-total">—</strong><small>Серед останніх 30 задач</small></div>
+          <div class="metric"><span>АКТИВНІ</span><strong id="stat-active">—</strong><small>У черзі або в роботі</small></div>
+          <div class="metric"><span>ГОТОВО</span><strong id="stat-completed">—</strong><small>Завершені конвертації</small></div>
+        </div>
+        <div class="history-toolbar">
+          <div class="filters" role="group" aria-label="Фільтр задач">
+            <button type="button" class="filter-chip active" data-filter="all" aria-pressed="true">Усі</button>
+            <button type="button" class="filter-chip" data-filter="active" aria-pressed="false">Активні</button>
+            <button type="button" class="filter-chip" data-filter="completed" aria-pressed="false">Завершені</button>
+            <button type="button" class="filter-chip" data-filter="other" aria-pressed="false">Інші</button>
+          </div>
+          <p id="tasks-result" role="status">Увійдіть, щоб переглянути задачі.</p>
+        </div>
+        <ul id="task-list" aria-label="Мої задачі"></ul>
+        <div class="empty-history" id="empty-history" hidden><div class="empty-icon" aria-hidden="true">▤</div><strong>Тут поки порожньо</strong><p id="empty-history-message">Немає задач для вибраного фільтра.</p></div>
+      </section>
 
-      if (!response.ok) {
-        throw new Error(data.error || "Помилка сервера.");
-      }
-
-      return data;
-    }
-
-    function setUploadProgress(percent) {
-      uploadProgress.firstElementChild.style.setProperty("--upload-ratio", String(percent / 100));
-      uploadProgress.setAttribute("aria-valuenow", String(percent));
-      uploadProgressText.textContent = percent === 100
-        ? "Файл передано. Очікуємо підтвердження сервера..."
-        : `Завантаження PPTX: ${percent}%`;
-    }
-
-    function uploadFile(file) {
-      return new Promise((resolve, reject) => {
-        const request = new XMLHttpRequest();
-        request.open("POST", "/api/tasks/convert");
-        request.setRequestHeader("Content-Type", "application/octet-stream");
-        request.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
-
-        request.upload.addEventListener("progress", (event) => {
-          if (event.lengthComputable) {
-            setUploadProgress(Math.floor(event.loaded / event.total * 100));
-          }
-        });
-
-        request.addEventListener("load", () => {
-          let data;
-          try {
-            data = JSON.parse(request.responseText);
-          } catch {
-            reject(new Error(request.status === 413
-              ? "Файл завеликий. Максимум 30 МіБ."
-              : "Некоректна відповідь сервера."));
-            return;
-          }
-          if (request.status < 200 || request.status >= 300) {
-            reject(new Error(data.error || "Помилка сервера."));
-          } else {
-            resolve(data);
-          }
-        });
-
-        request.addEventListener("error", () => {
-          reject(new Error("Не вдалося завантажити PPTX."));
-        });
-
-        request.send(file);
-      });
-    }
-
-    function updateFileButtons() {
-      const selected = conversionFileInput.files.length > 0;
-      convertFileButton.disabled = !canManageTasks || !selected || uploadingFile;
-      clearSelectionButton.disabled = !canManageTasks || !selected || uploadingFile;
-      conversionFileInput.disabled = !canManageTasks || uploadingFile;
-    }
-
-    function setTaskAccess(allowed) {
-      canManageTasks = allowed;
-      reloadTasksButton.disabled = !allowed;
-      clearHistoryButton.disabled = !allowed;
-      if (!allowed) {
-        conversionFileInput.value = "";
-        uploadProgressContainer.hidden = true;
-        clearTimeout(taskRefreshTimer);
-        taskList.replaceChildren();
-        tasksResult.textContent = "Увійдіть, щоб переглянути задачі.";
-      }
-      updateFileButtons();
-    }
-
-    function updateTaskProgress(item, task) {
-      const completed = task.status === "completed";
-      const queued = task.status === "queued";
-      const foundIndex = processingStages.findIndex((stage) => stage.key === task.processing_stage);
-      const currentIndex = foundIndex === -1 ? 1 : foundIndex;
-      const stageText = completed ? "Готово — усі етапи завершено"
-        : queued ? "Файл завантажено — очікує вільного worker"
-        : processingStages[currentIndex].label;
-      const bar = item.querySelector(".task-progress");
-      const description = item.querySelector(".task-stage");
-
-      bar.setAttribute("aria-label", `Задача ${task.id}: ${stageText}`);
-      bar.setAttribute("aria-valuetext", stageText);
-      description.textContent = stageText;
-
-      for (let i = 0; i < processingStages.length; i++) {
-        const segment = bar.children[i];
-        segment.classList.toggle("done", completed || (queued ? i === 0 : i < currentIndex));
-        segment.classList.toggle("current", !completed && !queued && i === currentIndex);
-      }
-    }
-
-    async function loadTasks() {
-      clearTimeout(taskRefreshTimer);
-      if (taskList.children.length === 0) {
-        tasksResult.textContent = "Завантажуємо історію...";
-      }
-      try {
-        const data = await apiRequest("/api/tasks");
-        const previousItems = Array.from(taskList.children);
-        const nextItems = [];
-
-        for (const task of data.tasks) {
-          const signature = [task.status, task.has_file, task.has_output,
-            task.worker_name, task.error_message, task.file_size_bytes].join("|");
-          const previousItem = previousItems.find((item) => item.dataset.taskId === String(task.id));
-
-          if (previousItem && previousItem.dataset.signature === signature) {
-            if (task.status === "processing") {
-              updateTaskProgress(previousItem, task);
-            }
-            nextItems.push(previousItem);
-            continue;
-          }
-
-          const item = document.createElement("li");
-          item.dataset.taskId = String(task.id);
-          item.dataset.signature = signature;
-          const info = document.createElement("div");
-          const names = {
-            draft: "Чернетка",
-            queued: "У черзі",
-            processing: "Виконується",
-            completed: "Завершено",
-            failed: "Помилка",
-            cancelled: "Скасовано"
-          };
-          const worker = task.worker_name ? ` (${task.worker_name})` : "";
-          info.textContent = `#${task.id} — ${task.source_filename} — ${names[task.status] || task.status}${worker}`;
-          item.append(info);
-
-          if (["queued", "processing", "completed"].includes(task.status)) {
-            const bar = document.createElement("div");
-            bar.className = "task-progress";
-            bar.setAttribute("role", "progressbar");
-
-            for (let i = 0; i < processingStages.length; i++) {
-              const segment = document.createElement("span");
-              segment.className = "task-progress-step";
-              bar.append(segment);
-            }
-
-            const description = document.createElement("p");
-            description.className = "task-stage";
-            item.append(bar, description);
-            updateTaskProgress(item, task);
-          }
-
-          if (task.status === "completed" && task.has_output) {
-            const link = document.createElement("a");
-            link.className = "download-link";
-            link.href = `/api/tasks/${task.id}/download`;
-            link.textContent = "Завантажити PDF";
-            item.append(link);
-          }
-
-          if (task.status === "failed" && task.error_message) {
-            const errorInfo = document.createElement("p");
-            errorInfo.textContent = task.error_message;
-            item.append(errorInfo);
-          }
-
-          if (task.status === "draft") {
-            const details = document.createElement("p");
-            details.textContent = "Незавершена чернетка зі старої версії.";
-            item.append(details);
-          }
-
-          if (["queued", "processing"].includes(task.status)) {
-            const cancelButton = document.createElement("button");
-            cancelButton.type = "button";
-            cancelButton.textContent = "Скасувати";
-            cancelButton.addEventListener("click", async () => {
-              cancelButton.disabled = true;
-              try {
-                await apiRequest(`/api/tasks/${task.id}/cancel`, { method: "POST" });
-                await loadTasks();
-              } catch (error) {
-                tasksResult.textContent = error.message;
-                cancelButton.disabled = false;
-              }
-            });
-            item.append(cancelButton);
-          }
-
-          if (["draft", "completed", "failed", "cancelled"].includes(task.status)) {
-            const deleteButton = document.createElement("button");
-            deleteButton.type = "button";
-            deleteButton.textContent = "Видалити з історії";
-            deleteButton.addEventListener("click", async () => {
-              if (!confirm(`Видалити задачу #${task.id} та всі пов'язані файли?`)) {
-                return;
-              }
-              deleteButton.disabled = true;
-              try {
-                await apiRequest(`/api/tasks/${task.id}`, { method: "DELETE" });
-                await loadTasks();
-              } catch (error) {
-                tasksResult.textContent = error.message;
-                deleteButton.disabled = false;
-              }
-            });
-            item.append(deleteButton);
-          }
-
-          nextItems.push(item);
-        }
-
-        for (let i = 0; i < nextItems.length; i++) {
-          if (taskList.children[i] !== nextItems[i]) {
-            taskList.insertBefore(nextItems[i], taskList.children[i] || null);
-          }
-        }
-        for (const oldItem of previousItems) {
-          if (!nextItems.includes(oldItem)) {
-            oldItem.remove();
-          }
-        }
-
-        tasksResult.textContent = data.tasks.length
-          ? `Знайдено ${data.tasks.length} останніх задач. Відповів ${data.instance}.`
-          : "Задач поки немає.";
-
-        if (data.tasks.some((task) => task.status === "queued" || task.status === "processing")) {
-          taskRefreshTimer = setTimeout(loadTasks, 1000);
-        }
-      } catch (error) {
-        tasksResult.textContent = error.message;
-      }
-    }
-
-    async function showAccount() {
-      try {
-        const data = await apiRequest("/api/me");
-        accountResult.textContent = data.authenticated
-          ? `Ви увійшли як ${data.nickname}. Відповів ${data.instance}.`
-          : "Ви не авторизовані.";
-        setTaskAccess(data.authenticated);
-        if (data.authenticated) {
-          await loadTasks();
-        }
-      } catch {
-        accountResult.textContent = "Не вдалося перевірити сесію.";
-        setTaskAccess(false);
-      }
-    }
-
-    async function submitAccount(url) {
-      accountResult.textContent = "Обробляємо запит...";
-      try {
-        const data = await apiRequest(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nickname: nicknameInput.value, password: passwordInput.value })
-        });
-        passwordInput.value = "";
-        accountResult.textContent = `Успішно. Ви увійшли як ${data.nickname}. Відповів ${data.instance}.`;
-        setTaskAccess(true);
-        await loadTasks();
-      } catch (error) {
-        accountResult.textContent = error.message;
-      }
-    }
-
-    async function countRequests(url, total, requireAccount = false) {
-      const counts = {};
-      let databaseName = "";
-      let nickname = "";
-
-      for (let i = 0; i < total; i++) {
-        const data = await apiRequest(url);
-
-        if (requireAccount) {
-          if (!data.authenticated) {
-            throw new Error("Авторизація не збереглася.");
-          }
-          if (nickname && nickname !== data.nickname) {
-            throw new Error("Сервери повернули різних користувачів.");
-          }
-          nickname = data.nickname;
-        }
-
-        if (url === "/api/database") {
-          if (databaseName && databaseName !== data.database) {
-            throw new Error("Сервери підключені до різних баз даних.");
-          }
-          databaseName = data.database;
-        }
-
-        counts[data.instance] = (counts[data.instance] || 0) + 1;
-      }
-
-      const summary = Object.entries(counts).map(([name, count]) => `${name} — ${count}`).join("; ");
-      return { summary, databaseName, nickname };
-    }
-
-    conversionFileInput.addEventListener("change", () => {
-      uploadProgressContainer.hidden = true;
-      updateFileButtons();
-    });
-
-    clearSelectionButton.addEventListener("click", () => {
-      conversionFileInput.value = "";
-      uploadProgressContainer.hidden = true;
-      updateFileButtons();
-    });
-
-    convertFileButton.addEventListener("click", async () => {
-      const file = conversionFileInput.files[0];
-      if (!file) {
-        return;
-      }
-      if (file.name.length < 6 || file.name.length > 120 || !/\.pptx$/i.test(file.name) || /[\x00-\x1f/\\]/.test(file.name)) {
-        tasksResult.textContent = "Вибери PPTX-файл з назвою до 120 символів.";
-        return;
-      }
-      if (file.size === 0 || file.size > 30 * 1024 * 1024) {
-        tasksResult.textContent = "Розмір файлу має бути від 1 байта до 30 МіБ.";
-        return;
-      }
-
-      uploadingFile = true;
-      updateFileButtons();
-      uploadProgressContainer.hidden = false;
-      uploadProgress.firstElementChild.classList.add("uploading");
-      uploadProgress.firstElementChild.classList.remove("done");
-      setUploadProgress(0);
-      tasksResult.textContent = "Завантажуємо PPTX...";
-      try {
-        await uploadFile(file);
-        uploadProgress.firstElementChild.classList.remove("uploading");
-        uploadProgress.firstElementChild.classList.add("done");
-        setUploadProgress(100);
-        uploadProgressText.textContent = "PPTX завантажено. Подальші етапи показано в історії.";
-        conversionFileInput.value = "";
-        await loadTasks();
-      } catch (error) {
-        uploadProgressContainer.hidden = true;
-        tasksResult.textContent = error.message;
-      } finally {
-        uploadingFile = false;
-        updateFileButtons();
-      }
-    });
-
-    reloadTasksButton.addEventListener("click", loadTasks);
-
-    clearHistoryButton.addEventListener("click", async () => {
-      if (!confirm("Видалити всю завершену, скасовану й помилкову історію та старі чернетки разом із файлами? Активні задачі залишаться.")) {
-        return;
-      }
-      clearHistoryButton.disabled = true;
-      try {
-        const data = await apiRequest("/api/tasks/history", { method: "DELETE" });
-        await loadTasks();
-        tasksResult.textContent = `Видалено задач: ${data.deleted}.`;
-      } catch (error) {
-        tasksResult.textContent = error.message;
-      } finally {
-        clearHistoryButton.disabled = !canManageTasks;
-      }
-    });
-
-    document.getElementById("register").addEventListener("click", () => submitAccount("/api/register"));
-    document.getElementById("login").addEventListener("click", () => submitAccount("/api/login"));
-
-    document.getElementById("logout").addEventListener("click", async () => {
-      try {
-        await apiRequest("/api/logout", { method: "POST" });
-        passwordInput.value = "";
-        accountResult.textContent = "Ви вийшли з акаунта.";
-        sessionResult.textContent = "";
-        setTaskAccess(false);
-      } catch {
-        accountResult.textContent = "Не вдалося вийти з акаунта.";
-      }
-    });
-
-    document.getElementById("check-session").addEventListener("click", async () => {
-      sessionResult.textContent = "Перевіряємо сесію...";
-      try {
-        const data = await countRequests("/api/me", 10, true);
-        sessionResult.textContent = `Користувач ${data.nickname}: ${data.summary}.`;
-      } catch (error) {
-        sessionResult.textContent = error.message;
-      }
-    });
-
-    document.getElementById("check-server").addEventListener("click", async () => {
-      try {
-        const data = await apiRequest("/api/health");
-        result.textContent = `З'єднання працює. Відповів ${data.instance} (порт ${data.port}).`;
-      } catch {
-        result.textContent = "Не вдалося отримати відповідь від сервера.";
-      }
-    });
-
-    document.getElementById("check-balance").addEventListener("click", async () => {
-      try {
-        const data = await countRequests("/api/health", 10);
-        balanceResult.textContent = `Результати: ${data.summary}.`;
-      } catch {
-        balanceResult.textContent = "Не вдалося перевірити балансування.";
-      }
-    });
-
-    document.getElementById("check-database").addEventListener("click", async () => {
-      try {
-        const data = await countRequests("/api/database", 6);
-        databaseResult.textContent = `База даних ${data.databaseName} доступна. ${data.summary}.`;
-      } catch {
-        databaseResult.textContent = "Не вдалося перевірити PostgreSQL.";
-      }
-    });
-
-    showAccount();
-  </script>
+      <section class="panel system-panel" id="infrastructure" aria-labelledby="system-heading">
+        <div class="panel-title"><div><p class="panel-kicker">05 / ДІАГНОСТИКА</p><h2 id="system-heading">Перевірка системи</h2><p class="panel-subtitle">Окремі перевірки API, балансування Nginx і спільної бази даних.</p></div></div>
+        <div class="system-grid">
+          <div class="system-check"><span class="system-icon" aria-hidden="true">◎</span><strong>API-сервер</strong><p>Перевірка доступності API.</p><button id="check-server" class="button button-secondary button-small" type="button">Перевірити API</button><p class="system-result" id="result" role="status"></p></div>
+          <div class="system-check"><span class="system-icon" aria-hidden="true">⇄</span><strong>Load Balancing</strong><p>10 запитів через Nginx до двох API-серверів.</p><button id="check-balance" class="button button-secondary button-small" type="button">Перевірити балансування</button><p class="system-result" id="balance-result" role="status"></p></div>
+          <div class="system-check"><span class="system-icon" aria-hidden="true">▦</span><strong>PostgreSQL</strong><p>Перевірка спільної бази даних.</p><button id="check-database" class="button button-secondary button-small" type="button">Перевірити базу</button><p class="system-result" id="database-result" role="status"></p></div>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer"><span>PPTX → PDF / WEBPROJECT</span><span>2 API-сервери · 2 worker-процеси · PostgreSQL</span></footer>
+  </div>
+  <script src="/app.js" defer></script>
 </body>
 </html>

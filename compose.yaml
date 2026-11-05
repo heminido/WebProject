@@ -26,6 +26,12 @@ services:
       DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
       UPLOAD_DIR: /app/uploads
       WORKER_SHARED_SECRET: "${WORKER_SHARED_SECRET:-}"
+      MAX_PPTX_MIB: "${MAX_PPTX_MIB:?Set MAX_PPTX_MIB in .env}"
+      MAX_PDF_MIB: "${MAX_PDF_MIB:?Set MAX_PDF_MIB in .env}"
+      MAX_ACTIVE_TASKS: "${MAX_ACTIVE_TASKS:?Set MAX_ACTIVE_TASKS in .env}"
+      MAX_PPTX_ENTRIES: "${MAX_PPTX_ENTRIES:?Set MAX_PPTX_ENTRIES in .env}"
+      MAX_UNCOMPRESSED_MIB: "${MAX_UNCOMPRESSED_MIB:?Set MAX_UNCOMPRESSED_MIB in .env}"
+      CONVERSION_TIMEOUT_SECONDS: "${CONVERSION_TIMEOUT_SECONDS:?Set CONVERSION_TIMEOUT_SECONDS in .env}"
     volumes:
       - uploaded_documents:/app/uploads
     depends_on:
@@ -49,6 +55,12 @@ services:
       DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
       UPLOAD_DIR: /app/uploads
       WORKER_SHARED_SECRET: "${WORKER_SHARED_SECRET:-}"
+      MAX_PPTX_MIB: "${MAX_PPTX_MIB:?Set MAX_PPTX_MIB in .env}"
+      MAX_PDF_MIB: "${MAX_PDF_MIB:?Set MAX_PDF_MIB in .env}"
+      MAX_ACTIVE_TASKS: "${MAX_ACTIVE_TASKS:?Set MAX_ACTIVE_TASKS in .env}"
+      MAX_PPTX_ENTRIES: "${MAX_PPTX_ENTRIES:?Set MAX_PPTX_ENTRIES in .env}"
+      MAX_UNCOMPRESSED_MIB: "${MAX_UNCOMPRESSED_MIB:?Set MAX_UNCOMPRESSED_MIB in .env}"
+      CONVERSION_TIMEOUT_SECONDS: "${CONVERSION_TIMEOUT_SECONDS:?Set CONVERSION_TIMEOUT_SECONDS in .env}"
     volumes:
       - uploaded_documents:/app/uploads
     depends_on:
@@ -72,10 +84,16 @@ services:
       DB_USER: webproject
       DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
       UPLOAD_DIR: /app/uploads
+      MAX_PPTX_MIB: "${MAX_PPTX_MIB:?Set MAX_PPTX_MIB in .env}"
+      MAX_PDF_MIB: "${MAX_PDF_MIB:?Set MAX_PDF_MIB in .env}"
+      MAX_ACTIVE_TASKS: "${MAX_ACTIVE_TASKS:?Set MAX_ACTIVE_TASKS in .env}"
+      MAX_PPTX_ENTRIES: "${MAX_PPTX_ENTRIES:?Set MAX_PPTX_ENTRIES in .env}"
+      MAX_UNCOMPRESSED_MIB: "${MAX_UNCOMPRESSED_MIB:?Set MAX_UNCOMPRESSED_MIB in .env}"
+      CONVERSION_TIMEOUT_SECONDS: "${CONVERSION_TIMEOUT_SECONDS:?Set CONVERSION_TIMEOUT_SECONDS in .env}"
     volumes:
       - uploaded_documents:/app/uploads
-    mem_limit: 1g
-    cpus: 1.0
+    mem_limit: "${WORKER_MEMORY:?Set WORKER_MEMORY in .env}"
+    cpus: ${WORKER_CPUS:?Set WORKER_CPUS in .env}
     init: true
     restart: unless-stopped
     depends_on:
@@ -94,10 +112,16 @@ services:
       DB_USER: webproject
       DB_PASSWORD: "${POSTGRES_PASSWORD:?Copy .env.example to .env}"
       UPLOAD_DIR: /app/uploads
+      MAX_PPTX_MIB: "${MAX_PPTX_MIB:?Set MAX_PPTX_MIB in .env}"
+      MAX_PDF_MIB: "${MAX_PDF_MIB:?Set MAX_PDF_MIB in .env}"
+      MAX_ACTIVE_TASKS: "${MAX_ACTIVE_TASKS:?Set MAX_ACTIVE_TASKS in .env}"
+      MAX_PPTX_ENTRIES: "${MAX_PPTX_ENTRIES:?Set MAX_PPTX_ENTRIES in .env}"
+      MAX_UNCOMPRESSED_MIB: "${MAX_UNCOMPRESSED_MIB:?Set MAX_UNCOMPRESSED_MIB in .env}"
+      CONVERSION_TIMEOUT_SECONDS: "${CONVERSION_TIMEOUT_SECONDS:?Set CONVERSION_TIMEOUT_SECONDS in .env}"
     volumes:
       - uploaded_documents:/app/uploads
-    mem_limit: 1g
-    cpus: 1.0
+    mem_limit: "${WORKER_MEMORY:?Set WORKER_MEMORY in .env}"
+    cpus: ${WORKER_CPUS:?Set WORKER_CPUS in .env}
     init: true
     restart: unless-stopped
     depends_on:
@@ -106,10 +130,14 @@ services:
 
   nginx:
     image: nginx:stable-alpine
+    environment:
+      CLIENT_MAX_PPTX_SIZE: "${MAX_PPTX_MIB:?Set MAX_PPTX_MIB in .env}m"
+      CLIENT_MAX_PDF_SIZE: "${MAX_PDF_MIB:?Set MAX_PDF_MIB in .env}m"
+      NGINX_ENVSUBST_FILTER: "^CLIENT_MAX_(PPTX|PDF)_SIZE$"
     ports:
       - "127.0.0.1:8080:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx.conf:/etc/nginx/templates/default.conf.template:ro
     depends_on:
       api1:
         condition: service_healthy
