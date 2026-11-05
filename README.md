@@ -45,6 +45,27 @@ Run these commands in the `WebProject` folder. Docker Desktop and Docker Compose
 
 Open **http://localhost:8080**, create an account, select a PPTX and use the conversion button. The task is queued automatically.
 
+## Local HTTPS
+
+For HTTPS on this Mac, install `mkcert` with Homebrew, then generate a certificate trusted by this computer:
+
+```sh
+brew install mkcert
+mkcert -install
+mkdir -p certs
+mkcert -cert-file certs/localhost.pem -key-file certs/localhost-key.pem localhost 127.0.0.1 ::1
+```
+
+Start the app with the optional HTTPS configuration:
+
+```sh
+docker compose -f compose.yaml -f compose.https.yaml up -d
+```
+
+Open **https://localhost:8443**. Normal browser visits to `http://localhost:8080` redirect to HTTPS in this mode. Session cookies use the `Secure` attribute. Local internal HTTP on port 80 remains available for the optional worker connection, and the regular `compose.yaml` setup still works without certificates.
+
+Certificates and keys inside `certs/` are local and must never be committed or shared. The certificate is trusted on this Mac only; it is not a public-domain certificate or a ready-to-deploy public HTTPS setup. Remote access still requires a private VPN and appropriate TLS configuration.
+
 ### Updating an existing installation
 
 If migration `004_stages.sql` has not been applied yet, run it once:
@@ -94,4 +115,4 @@ A second computer requires a private VPN, restricted network access and matching
 
 ## Known limitations
 
-Conversions are not retried automatically after failures. Finished PDFs do not expire automatically. Cancellation is best-effort; a running LibreOffice process is checked regularly. Crash recovery was demonstrated by stopping workers, but it does not retry interrupted tasks. HTTPS, automatic scaling and an admin panel are not included.
+Conversions are not retried automatically after failures. Finished PDFs do not expire automatically. Cancellation is best-effort; a running LibreOffice process is checked regularly. Crash recovery was demonstrated by stopping workers, but it does not retry interrupted tasks. Automatic scaling and an admin panel are not included. HTTPS is available for local development only.

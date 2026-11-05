@@ -1,0 +1,13 @@
+services:
+  api1:
+    environment:
+      COOKIE_SECURE: "true"
+  api2:
+    environment:
+      COOKIE_SECURE: "true"
+  nginx:
+    ports:
+      - "127.0.0.1:8443:443"
+    volumes:
+      - ./nginx.https.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./certs:/etc/nginx/certs:ro
